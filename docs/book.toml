@@ -1,0 +1,14 @@
+[book]
+title = "muelle"
+description = "Pull-based CI/CD for static sites on a NixOS host"
+authors = ["haztecaso"]
+language = "en"
+
+[output.html]
+site-url = "/muelle/"
+git-repository-url = "https://github.com/haztecaso/muelle"
+# mermaid.min.js and mermaid-init.js are written by `mdbook-mermaid install` in nix/docs.nix
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
