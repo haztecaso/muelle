@@ -49,11 +49,9 @@
           ];
           root = "/srv/artifacts";
         };
-        virtualHosts."demo.test" = {
-          useACMEHost = "demo.test";
-          forceSSL = true;
-          root = "/var/www/muelle/demo/prod/current";
-        };
+        commonHttpConfig = "log_format withHost '$host $request';";
+        # extends the prod vhost declared by muelle
+        virtualHosts."demo.test".locations."/extra".return = "200 extra";
       };
 
       services.muelle = {
@@ -63,10 +61,12 @@
         acmeHost = "p.test";
         artifactUrlBase = "http://127.0.0.1:8080/repos";
         hookRateLimit = "600r/m";
+        accessLogFormat = "withHost";
         sites.demo = {
           repo = "owner/demo";
           secretFile = "/etc/muelle-demo";
-          prodUrl = "https://demo.test";
+          domain = "demo.test";
+          extraConfig = "add_header X-Demo yes always;";
           redirectFrom = [ "demo.test" ];
         };
         sites.prodonly = {
@@ -144,6 +144,14 @@
         s = wait_status(id)
         assert s["url"] == "https://demo.test", s
         machine.succeed(f"curl -sk {RESOLVE} https://demo.test/ | grep prod-1111111")
+
+    with subtest("prod vhost declared by muelle"):
+        machine.succeed(f"curl -skI {RESOLVE} https://demo.test/ | grep -i '^x-demo: yes'")
+        machine.succeed(f"curl -skf {RESOLVE} https://demo.test/index | grep prod-1111111")
+        machine.succeed(f"curl -skf {RESOLVE} https://demo.test/extra | grep extra")
+        machine.succeed("grep -q '^demo.test GET / ' /var/log/nginx/demo-access.log")
+        loc = machine.succeed(f"curl -s {RESOLVE} --resolve demo.test:80:127.0.0.1 -o /dev/null -w '%{{redirect_url}}' http://demo.test/")
+        assert loc == "https://demo.test/", loc
 
     with subtest("prod redeploy with tarball flips current"):
         id, _ = deploy("demo", "prod", SHA2, "b.tar.gz", kind="tar")

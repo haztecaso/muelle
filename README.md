@@ -38,7 +38,7 @@ set GitHub Deployment state
 
 | env       | URL                                       |
 |-----------|-------------------------------------------|
-| `prod`    | your own vhost, rooted at `services.muelle.sites.<name>.root` |
+| `prod`    | `https://<domain>` (vhost declared by muelle), or your own vhost rooted at `services.muelle.sites.<name>.root` |
 | `next`    | `https://next-<site>.<previewDomain>`     |
 | `preview` | `https://<hash>-<site>.<previewDomain>` (new URL per commit) |
 
@@ -87,19 +87,25 @@ With `redirectFrom = [ "example.com" ]`, `next.example.com` and
     sites.mysite = {
       repo = "octocat/mysite";
       secretFile = config.age.secrets."muelle-mysite".path;
-      prodUrl = "https://mysite.example.org";
+      # muelle declares the prod vhost: HTTPS, root, try_files, per-site logs
+      domain = "mysite.example.org";   # prodUrl defaults to https://<domain>
+      acmeHost = "mysite.example.org"; # default: domain
+      extraConfig = ''
+        error_page 404 /404.html;
+      '';
       redirectFrom = [ "mysite.example.org" ];
     };
   };
 
-  # prod vhost stays yours
-  services.nginx.virtualHosts."mysite.example.org" = {
-    useACMEHost = "mysite.example.org";
-    forceSSL = true;
-    root = config.services.muelle.sites.mysite.root;
-  };
+  # extend the prod vhost by name when extraConfig is not enough
+  services.nginx.virtualHosts."mysite.example.org".locations."/feed".proxyPass = "http://127.0.0.1:8000";
 }
 ```
+
+Without `domain`, muelle declares no prod vhost: set `prodUrl` and point
+your own vhost at `services.muelle.sites.<name>.root`.
+`accessLogFormat` picks a `log_format` (defined elsewhere) for the prod
+access logs.
 
 Generate the secret as hex (it is embedded in the webhook config template):
 
@@ -113,7 +119,7 @@ Store it on the host (e.g. with agenix) and as a repository secret
 ### Migrating an existing site
 
 Seed the first release from the current docroot without copying data
-(hard links, same filesystem), then point your vhost at `.root`:
+(hard links, same filesystem), then set `domain` (or point your vhost at `.root`):
 
 ```sh
 site=mysite; old=/var/www/mysite
