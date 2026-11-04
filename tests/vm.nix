@@ -1,0 +1,225 @@
+{ muelleModule }:
+{
+  name = "muelle";
+
+  nodes.machine =
+    { pkgs, ... }:
+    {
+      imports = [ muelleModule ];
+
+      # ACME never succeeds in the VM; nginx runs on the self-signed fallback certs.
+      security.acme = {
+        acceptTerms = true;
+        defaults.email = "test@example.test";
+        defaults.server = "https://127.0.0.1/unreachable";
+        defaults.dnsProvider = "cloudflare";
+        certs."p.test".extraDomainNames = [
+          "muelle.p.test"
+          "*.p.test"
+        ];
+        certs."demo.test".extraDomainNames = [ "*.demo.test" ];
+      };
+      users.users.nginx.extraGroups = [ "acme" ];
+
+      environment.etc."muelle-demo".text = "deadbeef";
+      environment.etc."muelle-prodonly".text = "cafebabe";
+      environment.systemPackages = with pkgs; [
+        jq
+        openssl
+        zip
+        curl
+      ];
+
+      services.nginx = {
+        enable = true;
+        # like a real host: unknown names must not fall through to the first vhost
+        virtualHosts."_" = {
+          default = true;
+          rejectSSL = true;
+          locations."/".return = "444";
+        };
+        # fake GitHub artifact API
+        virtualHosts."artifacts" = {
+          listen = [
+            {
+              addr = "127.0.0.1";
+              port = 8080;
+            }
+          ];
+          root = "/srv/artifacts";
+        };
+        virtualHosts."demo.test" = {
+          useACMEHost = "demo.test";
+          forceSSL = true;
+          root = "/var/www/muelle/demo/prod/current";
+        };
+      };
+
+      services.muelle = {
+        enable = true;
+        domain = "muelle.p.test";
+        previewDomain = "p.test";
+        acmeHost = "p.test";
+        artifactUrlBase = "http://127.0.0.1:8080/repos";
+        hookRateLimit = "600r/m";
+        sites.demo = {
+          repo = "owner/demo";
+          secretFile = "/etc/muelle-demo";
+          prodUrl = "https://demo.test";
+          redirectFrom = [ "demo.test" ];
+        };
+        sites.prodonly = {
+          repo = "owner/prodonly";
+          secretFile = "/etc/muelle-prodonly";
+          prodUrl = "https://prodonly.test";
+          envs = [ "prod" ];
+        };
+      };
+    };
+
+  testScript = ''
+    import json, time
+
+    machine.wait_for_unit("nginx.service")
+    machine.wait_for_unit("webhook.service")
+    machine.wait_for_open_port(443)
+    machine.wait_for_open_port(9077)
+
+    RESOLVE = " ".join(f"--resolve {h}:443:127.0.0.1" for h in
+      ["muelle.p.test", "demo.test", "next.demo.test", "next-demo.p.test", "prod-demo.p.test"])
+    counter = [0]
+
+    def make_artifact(name, content, kind="zip"):
+        machine.succeed(f"rm -rf /tmp/build && mkdir -p /tmp/build/dist && echo '{content}' > /tmp/build/dist/index.html")
+        machine.succeed("mkdir -p /srv/artifacts/repos/owner/demo /srv/artifacts/repos/owner/prodonly")
+        path = f"/srv/artifacts/repos/owner/demo/{name}"
+        if kind == "zip":
+            machine.succeed(f"cd /tmp/build && zip -qr {path} dist")
+        else:
+            machine.succeed(f"tar -czf {path} -C /tmp/build dist")
+        return path, machine.succeed(f"sha256sum {path} | cut -d' ' -f1").strip()
+
+    def post(site, payload, secret, expect_code=200):
+        counter[0] += 1
+        payload.setdefault("id", f"test-{counter[0]:04d}-{int(time.time())}")
+        payload.setdefault("ts", int(machine.succeed("date +%s").strip()))
+        payload.setdefault("site", site)
+        payload.setdefault("branch", "main")
+        body = json.dumps(payload)
+        machine.succeed(f"cat > /tmp/body.json <<'EOF'\n{body}\nEOF")
+        machine.succeed("truncate -s -1 /tmp/body.json")
+        sig = machine.succeed(f"openssl dgst -sha256 -hmac {secret} -r /tmp/body.json | cut -d' ' -f1").strip()
+        out = machine.succeed(
+          f"curl -sk {RESOLVE} -o /tmp/resp -w '%{{http_code}}' "
+          f"-H 'Content-Type: application/json' -H 'X-Muelle-Signature: sha256={sig}' "
+          f"--data-binary @/tmp/body.json https://muelle.p.test/hooks/{site}"
+        )
+        resp = machine.succeed("cat /tmp/resp")
+        assert out == str(expect_code), f"expected {expect_code}, got {out}: {resp}"
+        return payload["id"], resp
+
+    def wait_status(id, want="success"):
+        for _ in range(60):
+            s = json.loads(machine.succeed(f"curl -sk {RESOLVE} https://muelle.p.test/status/{id}"))
+            if s["state"] in ("success", "failure"):
+                assert s["state"] == want, f"status: {s}"
+                return s
+            time.sleep(1)
+        raise Exception(f"timeout waiting for {id}")
+
+    def deploy(site, env, sha, name, branch="main", secret="deadbeef", **kw):
+        path, digest = make_artifact(name, f"{env}-{sha[:7]}", **kw)
+        return post(site, {
+            "action": "deploy", "env": env, "sha": sha, "branch": branch,
+            "artifact_url": f"http://127.0.0.1:8080/repos/owner/{site}/{name}",
+            "sha256": digest, "token": "ghs_dummy",
+        }, secret)
+
+    SHA1 = "1" * 40
+    SHA2 = "2" * 40
+
+    with subtest("prod deploy"):
+        id, _ = deploy("demo", "prod", SHA1, "a.zip")
+        s = wait_status(id)
+        assert s["url"] == "https://demo.test", s
+        machine.succeed(f"curl -sk {RESOLVE} https://demo.test/ | grep prod-1111111")
+
+    with subtest("prod redeploy with tarball flips current"):
+        id, _ = deploy("demo", "prod", SHA2, "b.tar.gz", kind="tar")
+        wait_status(id)
+        machine.succeed(f"curl -sk {RESOLVE} https://demo.test/ | grep prod-2222222")
+        machine.succeed(f"test -d /var/www/muelle/demo/prod/releases/{SHA1}")
+
+    with subtest("next deploy and apex redirect"):
+        id, _ = deploy("demo", "next", SHA1, "c.zip")
+        wait_status(id)
+        machine.succeed(f"curl -sk {RESOLVE} https://next-demo.p.test/ | grep next-1111111")
+        loc = machine.succeed(f"curl -sk {RESOLVE} -o /dev/null -w '%{{redirect_url}}' https://next.demo.test/x")
+        assert loc == "https://next-demo.p.test/x", loc
+        # prod is never served on the preview domain
+        machine.fail(f"curl -skf {RESOLVE} https://prod-demo.p.test/")
+
+    with subtest("preview deploy and teardown"):
+        id, resp = deploy("demo", "preview", SHA2, "d.zip", branch="feat/x")
+        url = json.loads(resp)["url"]
+        host = url.removeprefix("https://")
+        wait_status(id)
+        machine.succeed(f"curl -sk --resolve {host}:443:127.0.0.1 {url}/ | grep preview-2222222")
+        id, _ = post("demo", {"action": "teardown", "env": "preview", "branch": "feat/x"}, "deadbeef")
+        wait_status(id)
+        machine.succeed(f"curl -sk --resolve {host}:443:127.0.0.1 -o /dev/null -w '%{{http_code}}' {url}/ | grep 404")
+
+    # webhook answers an HMAC mismatch with 500 "Error occurred while evaluating hook rules."
+    with subtest("bad signature is rejected"):
+        _, r = post("demo", {"action": "deploy", "env": "prod"}, "wrong", expect_code=500)
+        assert "hook rules" in r, r
+
+    with subtest("secret of another site is rejected"):
+        _, r = post("demo", {"action": "deploy", "env": "prod"}, "cafebabe", expect_code=500)
+        assert "hook rules" in r, r
+
+    with subtest("validation errors"):
+        _, r = post("prodonly", {"action": "deploy", "env": "preview", "sha": SHA1, "sha256": "0" * 64,
+                                  "artifact_url": "http://127.0.0.1:8080/repos/owner/prodonly/x"}, "cafebabe", expect_code=500)
+        assert "not allowed" in r, r
+        _, r = post("demo", {"action": "deploy", "env": "prod", "sha": SHA1, "sha256": "0" * 64,
+                              "artifact_url": "http://127.0.0.1:8080/repos/owner/other/x"}, "deadbeef", expect_code=500)
+        assert "artifact_url not allowed" in r, r
+        _, r = post("demo", {"action": "deploy", "env": "prod", "ts": 1000000000}, "deadbeef", expect_code=500)
+        assert "stale" in r, r
+        _, r = post("demo", {"site": "prodonly", "action": "deploy", "env": "prod"}, "deadbeef", expect_code=500)
+        assert "site does not match" in r, r
+
+    with subtest("replayed id is rejected"):
+        id, _ = deploy("demo", "next", SHA2, "e.zip")
+        wait_status(id)
+        _, r = post("demo", {"id": id, "action": "deploy", "env": "next", "sha": SHA2, "sha256": "0" * 64,
+                              "artifact_url": "http://127.0.0.1:8080/repos/owner/demo/e.zip"}, "deadbeef", expect_code=500)
+        assert "already used" in r, r
+
+    with subtest("sha256 mismatch fails the deploy"):
+        machine.succeed("echo junk > /srv/artifacts/repos/owner/demo/junk.zip")
+        id, _ = post("demo", {"action": "deploy", "env": "next", "sha": SHA1, "sha256": "0" * 64,
+                               "artifact_url": "http://127.0.0.1:8080/repos/owner/demo/junk.zip"}, "deadbeef")
+        s = wait_status(id, "failure")
+        assert "sha256 mismatch" in s["message"], s
+
+    with subtest("symlinks in artifact are rejected"):
+        machine.succeed("rm -rf /tmp/evil && mkdir /tmp/evil && ln -s /etc/passwd /tmp/evil/index.html")
+        machine.succeed("tar -czf /srv/artifacts/repos/owner/demo/evil.tgz -C /tmp/evil .")
+        digest = machine.succeed("sha256sum /srv/artifacts/repos/owner/demo/evil.tgz | cut -d' ' -f1").strip()
+        id, _ = post("demo", {"action": "deploy", "env": "next", "sha": SHA1, "sha256": digest,
+                               "artifact_url": "http://127.0.0.1:8080/repos/owner/demo/evil.tgz"}, "deadbeef")
+        s = wait_status(id, "failure")
+        assert "non-regular" in s["message"], s
+        machine.succeed(f"curl -sk {RESOLVE} https://next-demo.p.test/ | grep next-2222222")
+
+    with subtest("dotdot paths are rejected"):
+        machine.succeed("cd /tmp && rm -rf dd && mkdir -p dd/a && echo x > dd/x && cd dd/a && tar -czPf /srv/artifacts/repos/owner/demo/dd.tgz ../x")
+        digest = machine.succeed("sha256sum /srv/artifacts/repos/owner/demo/dd.tgz | cut -d' ' -f1").strip()
+        id, _ = post("demo", {"action": "deploy", "env": "next", "sha": SHA1, "sha256": digest,
+                               "artifact_url": "http://127.0.0.1:8080/repos/owner/demo/dd.tgz"}, "deadbeef")
+        s = wait_status(id, "failure")
+        assert "'..'" in s["message"], s
+  '';
+}

@@ -1,0 +1,340 @@
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+let
+  inherit (lib)
+    mkOption
+    mkEnableOption
+    mkIf
+    mkMerge
+    types
+    ;
+  cfg = config.services.muelle;
+  muelle = pkgs.callPackage ./scripts { };
+
+  escapeRe = lib.replaceStrings [ "." "-" ] [ "\\." "\\-" ];
+
+  siteType = types.submodule (
+    { name, config, ... }:
+    {
+      options = {
+        repo = mkOption {
+          type = types.strMatching "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+";
+          example = "octocat/example.com";
+          description = "GitHub repository (owner/name) allowed to deploy this site. Artifacts are only fetched from its API.";
+        };
+        secretFile = mkOption {
+          type = types.path;
+          description = ''
+            File holding the HMAC secret for this site (e.g. an agenix secret path).
+            Read by systemd through LoadCredential, so it can stay root-only.
+            Use a hex string (`openssl rand -hex 32`).
+          '';
+        };
+        envs = mkOption {
+          type = types.listOf (
+            types.enum [
+              "prod"
+              "next"
+              "preview"
+            ]
+          );
+          default = [
+            "prod"
+            "next"
+            "preview"
+          ];
+          description = "Environments this site may deploy to. `[ \"prod\" ]` disables next and previews.";
+        };
+        prodUrl = mkOption {
+          type = types.str;
+          example = "https://example.com";
+          description = "Public URL of the prod environment, reported back to CI.";
+        };
+        redirectFrom = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          example = [ "example.com" ];
+          description = ''
+            Apex domains whose `next.<apex>` and `<hash>.<apex>` subdomains 302 to the
+            preview domain. Each apex needs an ACME cert of the same name covering `*.<apex>`.
+          '';
+        };
+        previewVhost = mkOption {
+          type = types.attrs;
+          default = cfg.previewVhostDefaults;
+          defaultText = lib.literalExpression "config.services.muelle.previewVhostDefaults";
+          description = "Extra nginx vhost attributes for this site's next/preview vhost (e.g. auth gating).";
+        };
+        root = mkOption {
+          type = types.str;
+          readOnly = true;
+          default = "${cfg.baseDir}/${name}/prod/current";
+          description = "Document root of the prod environment (a symlink flipped on deploy). Use it in your own vhost.";
+        };
+      };
+    }
+  );
+
+  configFile = (pkgs.formats.json { }).generate "muelle-config.json" {
+    inherit (cfg)
+      domain
+      previewDomain
+      baseDir
+      stateDir
+      maxSkew
+      keepReleases
+      keepPreviews
+      maxArtifactBytes
+      ;
+    sites = lib.mapAttrs (name: s: {
+      inherit (s) envs prodUrl repo;
+      artifactUrlPrefix = "${cfg.artifactUrlBase}/${s.repo}/";
+    }) cfg.sites;
+  };
+
+  hook =
+    name: _:
+    builtins.toJSON {
+      id = name;
+      execute-command = "${muelle}/bin/muelle-receive";
+      http-methods = [ "POST" ];
+      incoming-payload-content-type = "application/json";
+      include-command-output-in-response = true;
+      include-command-output-in-response-on-error = true;
+      trigger-rule-mismatch-http-response-code = 403;
+      response-headers = [
+        {
+          name = "Content-Type";
+          value = "application/json";
+        }
+      ];
+      pass-arguments-to-command = [
+        {
+          source = "string";
+          name = name;
+        }
+      ];
+      pass-environment-to-command = [
+        {
+          source = "entire-payload";
+          envname = "MUELLE_PAYLOAD";
+        }
+      ];
+      trigger-rule.match = {
+        type = "payload-hmac-sha256";
+        # backtick string: toJSON would escape double quotes inside the template action
+        secret = "{{ credential `muelle-${name}` }}";
+        parameter = {
+          source = "header";
+          name = "X-Muelle-Signature";
+        };
+      };
+    };
+
+  previewVhosts = lib.mapAttrs' (
+    name: s:
+    lib.nameValuePair "muelle-preview-${name}" (mkMerge [
+      {
+        # quoted: nginx needs quotes around regexes containing '{'
+        serverName = "\"~^(?!prod-)(?<muelle_slot>[a-z0-9]+)-${escapeRe name}\\.${escapeRe cfg.previewDomain}$\"";
+        useACMEHost = cfg.acmeHost;
+        forceSSL = true;
+        root = "${cfg.baseDir}/${name}/$muelle_slot/current";
+        extraConfig = ''
+          add_header X-Robots-Tag "noindex, nofollow" always;
+          try_files $uri $uri.html $uri/ =404;
+        '';
+      }
+      s.previewVhost
+    ])
+  ) (lib.filterAttrs (_: s: lib.any (e: e != "prod") s.envs) cfg.sites);
+
+  redirectVhosts = lib.listToAttrs (
+    lib.concatLists (
+      lib.mapAttrsToList (
+        name: s:
+        map (
+          apex:
+          lib.nameValuePair "muelle-redirect-${name}-${apex}" {
+            serverName = "\"~^(?<muelle_slot>next|[0-9a-f]{8})\\.${escapeRe apex}$\"";
+            useACMEHost = apex;
+            forceSSL = true;
+            locations."/".return = "302 https://$muelle_slot-${name}.${cfg.previewDomain}$request_uri";
+          }
+        ) s.redirectFrom
+      ) cfg.sites
+    )
+  );
+in
+{
+  options.services.muelle = {
+    enable = mkEnableOption "muelle deploy receiver";
+
+    domain = mkOption {
+      type = types.str;
+      example = "muelle.example.com";
+      description = "Host serving `/hooks/<site>` and `/status/<id>`.";
+    };
+    previewDomain = mkOption {
+      type = types.str;
+      example = "p.example.com";
+      description = "Domain under which `next-<site>` and `<hash>-<site>` are served.";
+    };
+    acmeHost = mkOption {
+      type = types.str;
+      description = "ACME cert (security.acme.certs name) covering `domain` and `*.previewDomain`.";
+    };
+    baseDir = mkOption {
+      type = types.str;
+      default = "/var/www/muelle";
+      description = "Root of `<site>/<slot>/{releases,current}`.";
+    };
+    stateDir = mkOption {
+      type = types.str;
+      default = "/var/lib/muelle";
+      description = "Status files, spool, logs and locks.";
+    };
+    port = mkOption {
+      type = types.port;
+      default = 9077;
+      description = "Local port of the webhook daemon.";
+    };
+    maxSkew = mkOption {
+      type = types.int;
+      default = 300;
+      description = "Seconds a request timestamp may differ from the server clock.";
+    };
+    keepReleases = mkOption {
+      type = types.ints.positive;
+      default = 3;
+      description = "Releases kept per slot.";
+    };
+    keepPreviews = mkOption {
+      type = types.ints.positive;
+      default = 10;
+      description = "Preview slots kept per site (oldest removed first).";
+    };
+    maxArtifactBytes = mkOption {
+      type = types.ints.positive;
+      default = 200 * 1024 * 1024;
+      description = "Maximum artifact download size.";
+    };
+    artifactUrlBase = mkOption {
+      type = types.str;
+      default = "https://api.github.com/repos";
+      description = "Artifacts must be fetched from `<artifactUrlBase>/<repo>/`.";
+    };
+    hookRateLimit = mkOption {
+      type = types.str;
+      default = "20r/m";
+      description = "nginx `limit_req` rate for `/hooks/`, per client IP (burst 5).";
+    };
+    previewVhostDefaults = mkOption {
+      type = types.attrs;
+      default = { };
+      example = {
+        enableAuth = true;
+      };
+      description = "Default extra vhost attributes for next/preview vhosts.";
+    };
+    sites = mkOption {
+      type = types.attrsOf siteType;
+      default = { };
+      description = "Sites that can be deployed.";
+    };
+  };
+
+  config = mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.sites != { };
+        message = "services.muelle.sites must not be empty";
+      }
+    ]
+    ++ lib.mapAttrsToList (name: _: {
+      assertion =
+        builtins.match "[a-z0-9][a-z0-9-]*" name != null && builtins.match "prod|next" name == null;
+      message = "services.muelle.sites.${name}: name must match [a-z0-9][a-z0-9-]*";
+    }) cfg.sites;
+
+    users.users.muelle = {
+      isSystemUser = true;
+      group = "muelle";
+      description = "muelle deploy receiver";
+    };
+    users.groups.muelle = { };
+
+    systemd.tmpfiles.rules = [
+      "d ${cfg.baseDir} 0755 muelle muelle -"
+      "d ${cfg.stateDir} 0755 muelle muelle -"
+      "d ${cfg.stateDir}/status 0755 muelle muelle 30d"
+      "d ${cfg.stateDir}/spool 0700 muelle muelle -"
+      "d ${cfg.stateDir}/log 0750 muelle muelle 30d"
+      "d ${cfg.stateDir}/locks 0750 muelle muelle -"
+    ]
+    ++ lib.mapAttrsToList (name: _: "d ${cfg.baseDir}/${name} 0755 muelle muelle -") cfg.sites;
+
+    services.webhook = {
+      enable = true;
+      user = "muelle";
+      group = "muelle";
+      ip = "127.0.0.1";
+      inherit (cfg) port;
+      environment.MUELLE_CONFIG = "${configFile}";
+      hooksTemplated = lib.mapAttrs hook cfg.sites;
+    };
+
+    systemd.services.webhook.serviceConfig = {
+      LoadCredential = lib.mapAttrsToList (name: s: "muelle-${name}:${s.secretFile}") cfg.sites;
+      UMask = "0022";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+      PrivateDevices = true;
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      ProtectKernelTunables = true;
+      ProtectControlGroups = true;
+      RestrictSUIDSGID = true;
+      ReadWritePaths = [
+        cfg.baseDir
+        cfg.stateDir
+      ];
+      # deploy workers are detached children: let them finish on restart
+      KillMode = "process";
+    };
+
+    services.nginx.appendHttpConfig = ''
+      limit_req_zone $binary_remote_addr zone=muelle_hooks:1m rate=${cfg.hookRateLimit};
+    '';
+
+    services.nginx.virtualHosts = mkMerge [
+      {
+        ${cfg.domain} = {
+          useACMEHost = cfg.acmeHost;
+          forceSSL = true;
+          locations."/".return = "404";
+          locations."/hooks/" = {
+            proxyPass = "http://127.0.0.1:${toString cfg.port}";
+            extraConfig = ''
+              limit_req zone=muelle_hooks burst=5 nodelay;
+              client_max_body_size 64k;
+            '';
+          };
+          locations."~ ^/status/(?<muelle_id>[A-Za-z0-9-]+)$" = {
+            alias = "${cfg.stateDir}/status/$muelle_id.json";
+            extraConfig = ''
+              default_type application/json;
+              add_header Cache-Control "no-store" always;
+            '';
+          };
+        };
+      }
+      previewVhosts
+      redirectVhosts
+    ];
+  };
+}
