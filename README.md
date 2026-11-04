@@ -275,10 +275,10 @@ nix build .#muelle          # package, runs the unit tests with nixpkgs' python
 nix flake check             # also the NixOS VM test of the full flow
 ```
 
-`main` is protected: changes land through pull requests once the `ci` jobs
-pass. They run in parallel: actionlint, nixfmt, ruff check, ruff format, ty,
-pytest, flake evaluation, the package build and the NixOS VM test (on a
-KVM-enabled runner). Dependabot keeps action references current, and
+`main` is protected: changes land through pull requests once the two `ci`
+jobs pass: `lint` (actionlint, nixfmt, flake evaluation, ruff, ty) and `check`
+(pytest, a smoke test of the composite action, and `nix flake check` with the
+package and the NixOS VM test on a KVM-enabled runner). Dependabot keeps action references current, and
 `flake-update.yml` opens a weekly `flake.lock` PR that merges itself when ci
 passes. To release, tag a commit on `main` with `vX.Y.Z` and push the tag.
 

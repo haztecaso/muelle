@@ -15,48 +15,61 @@ concurrency:
 permissions:
   contents: read
 
-# Every job is independent: they all run in parallel.
+# Two jobs, named after the required checks on main. Each check is a step
+# that runs even when an earlier one failed (!cancelled()), so one run
+# reports every failure.
 jobs:
-  actionlint:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@v31
-      - run: nix run nixpkgs#actionlint
-
-  nixfmt:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: cachix/install-nix-action@v31
-      - run: git ls-files -z '*.nix' | xargs -0 nix run nixpkgs#nixfmt -- --check
-
-  python:
-    name: python (${{ matrix.check.name }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        check:
-          - { name: ruff check, run: uv run ruff check --output-format github }
-          - { name: ruff format, run: uv run ruff format --check }
-          - { name: ty, run: uv run ty check --output-format github }
-          - { name: pytest, run: uv run pytest -v }
-    steps:
-      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
-      - run: uv sync --locked
-      - run: ${{ matrix.check.run }}
+      - id: sync
+        run: uv sync --locked
+      - name: actionlint
+        if: ${{ !cancelled() }}
+        run: nix run nixpkgs#actionlint
+      - name: nixfmt
+        if: ${{ !cancelled() }}
+        run: git ls-files -z '*.nix' | xargs -0 nix run nixpkgs#nixfmt -- --check
+      - name: flake evaluation
+        if: ${{ !cancelled() }}
+        # every output on every system; the builds run in the check job
+        run: nix flake check --no-build --all-systems
+      - name: ruff check
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run ruff check --output-format github
+      - name: ruff format
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run ruff format --check
+      - name: ty
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run ty check --output-format github
 
-  # The composite action end to end on a runner, against a closed port:
-  # python setup and module loading must work, and the request must fail cleanly.
-  action:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - id: muelle
+      # enable_kvm (default true) makes /dev/kvm usable for the NixOS VM test
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: system-features = nixos-test benchmark big-parallel kvm
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - id: sync
+        run: uv sync --locked
+      - name: pytest
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run pytest -v
+      # The composite action on a real runner, against a closed port: python
+      # setup and module loading must work, and the request must fail cleanly.
+      - id: action
+        name: composite action (expected to fail)
+        if: ${{ !cancelled() }}
         uses: ./
         continue-on-error: true
         with:
@@ -65,33 +78,14 @@ jobs:
           secret: dummy
           action: teardown
           deployments: "false"
-      - name: The client ran and reported the failure
+      - name: composite action reported the failure
+        if: ${{ !cancelled() }}
         env:
-          OUTCOME: ${{ steps.muelle.outcome }}
+          OUTCOME: ${{ steps.action.outcome }}
         run: |
           [[ $OUTCOME == failure ]]
           [[ $(command -v python3) != "$RUNNER_TOOL_CACHE"/* ]] # caller's PATH untouched
-
-  nix:
-    name: nix (${{ matrix.check }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # package: build + pytest with nixpkgs' python; vm: NixOS integration test
-        check: [package, vm]
-    steps:
-      - uses: actions/checkout@v7
-      # enable_kvm (default true) makes /dev/kvm usable for the NixOS VM test
-      - uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: system-features = nixos-test benchmark big-parallel kvm
-      - run: nix build -L --no-link ".#checks.x86_64-linux.${{ matrix.check }}"
-
-  flake:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: cachix/install-nix-action@v31
-      # evaluates every output on every system; the builds run in the nix job
-      - run: nix flake check --no-build --all-systems
+      - name: nix flake check
+        if: ${{ !cancelled() }}
+        # package (unit tests with nixpkgs' python) and the NixOS VM test
+        run: nix flake check -L
