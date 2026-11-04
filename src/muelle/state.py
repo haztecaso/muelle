@@ -62,6 +62,18 @@ class StateDir:
         except OSError, ValueError:
             return {}
 
+    def jobs(self) -> list[dict[str, Any]]:
+        """Every job that has a status file, its job file merged in; newest update first."""
+        entries: list[dict[str, Any]] = []
+        for path in (self.root / "status").glob("*.json"):
+            try:
+                status = json.loads(path.read_text())
+            except OSError, ValueError:
+                continue
+            entries.append(self.read_job(path.stem) | status)
+        entries.sort(key=lambda e: str(e.get("updated", "")), reverse=True)
+        return entries
+
     def write_status(self, id: str, state: State, message: str, url: str = "") -> None:
         write_json_atomic(
             self.status_path(id),

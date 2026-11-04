@@ -5,7 +5,7 @@ MUELLE_* environment variables so it can also run outside GitHub Actions.
 Required: MUELLE_ENDPOINT, MUELLE_SITE, MUELLE_SECRET
 Deploy:   MUELLE_SHA256 and either MUELLE_ARTIFACT_URL or MUELLE_ARTIFACT_ID
           (resolved against the GitHub API of the current repository)
-Optional: MUELLE_ACTION (deploy), MUELLE_ENV (preview), MUELLE_BRANCH, MUELLE_SHA,
+Optional: MUELLE_ACTION (deploy | teardown | announce | abort), MUELLE_ENV (preview), MUELLE_BRANCH, MUELLE_SHA,
           MUELLE_TOKEN (sent for the artifact download), MUELLE_TIMEOUT (600),
           MUELLE_POLL_INTERVAL (3), MUELLE_DEPLOYMENTS (true: report GitHub
           Deployment state, authenticated with GH_TOKEN or MUELLE_TOKEN),
@@ -14,6 +14,10 @@ Optional: MUELLE_ACTION (deploy), MUELLE_ENV (preview), MUELLE_BRANCH, MUELLE_SH
 The endpoint must be https://, except for loopback hosts: the body carries
 the GITHUB_TOKEN used for the artifact download, and the HMAC signature
 authenticates it without hiding it.
+
+announce (a build started) and abort (it failed or was cancelled) only update
+the host's listing: they do not wait, and a failure is a warning, never an
+error, so they cannot break a build.
 
 TLS uses the system trust store; point SSL_CERT_FILE at a CA bundle to trust
 a private CA.
@@ -60,6 +64,13 @@ class GitHub:
     @property
     def run_url(self) -> str:
         return f"{self.server_url}/{self.repository}/actions/runs/{self.run_id}"
+
+    @property
+    def listed_run_url(self) -> str:
+        """run_url as sent to the host, which only links to github.com."""
+        if self.server_url != "https://github.com" or not (self.repository and self.run_id):
+            return ""
+        return self.run_url
 
 
 @dataclass(frozen=True)
@@ -126,10 +137,12 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
         raise ClientError("cannot determine branch; set MUELLE_BRANCH")
     sha = env.get("MUELLE_SHA") or env.get("GITHUB_SHA", "")
 
+    if action not in ("deploy", "teardown", "announce", "abort"):
+        raise ClientError(f"invalid action '{action}'")
+    if action != "teardown" and not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ClientError("invalid or missing commit sha")
     sha256 = artifact_url = ""
     if action == "deploy":
-        if not re.fullmatch(r"[0-9a-f]{40}", sha):
-            raise ClientError("invalid or missing commit sha")
         sha256 = _require(env, "MUELLE_SHA256", "MUELLE_SHA256 is required for deploy").removeprefix("sha256:")
         artifact_url = env.get("MUELLE_ARTIFACT_URL", "")
         if not artifact_url:
@@ -137,8 +150,6 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
                 env, "MUELLE_ARTIFACT_ID", "MUELLE_ARTIFACT_ID or MUELLE_ARTIFACT_URL is required for deploy"
             )
             artifact_url = f"{github.api_url}/repos/{github.repository}/actions/artifacts/{artifact_id}/zip"
-    elif action != "teardown":
-        raise ClientError(f"invalid action '{action}'")
 
     return Settings(
         endpoint=endpoint,
@@ -168,6 +179,17 @@ def request_id(s: Settings, now: int, nonce: str | None = None) -> str:
 def build_payload(s: Settings, id: str, now: int) -> dict[str, Any]:
     if s.action == "teardown":
         return protocol.teardown_payload(id=id, site=s.site, branch=s.branch, ts=now)
+    if s.action in ("announce", "abort"):
+        return protocol.notice_payload(
+            id=id,
+            site=s.site,
+            action=s.action,
+            env=s.env,
+            branch=s.branch,
+            sha=s.sha,
+            run_url=s.github.listed_run_url,
+            ts=now,
+        )
     return protocol.deploy_payload(
         id=id,
         site=s.site,
@@ -178,6 +200,7 @@ def build_payload(s: Settings, id: str, now: int) -> dict[str, Any]:
         artifact_url=s.artifact_url,
         token=s.token,
         ts=now,
+        run_url=s.github.listed_run_url,
     )
 
 
@@ -291,6 +314,12 @@ def run(s: Settings, http: Http = _http, now: Callable[[], float] = time.time, *
         code, response = http(f"{s.endpoint}/hooks/{s.site}", data=body, headers=headers)
     except OSError as e:
         code, response = 0, str(e).encode()
+    if s.action in ("announce", "abort"):
+        if code != 200:
+            print(f"::warning::muelle {s.action} not recorded ({code}): {response[:500].decode(errors='replace')}")
+        else:
+            print(f"muelle: {s.action} recorded")
+        return 0
     if code != 200:
         print(f"::error::muelle rejected the request ({code}): {response[:500].decode(errors='replace')}")
         deployment.set_state("failure")

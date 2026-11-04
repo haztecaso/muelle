@@ -94,6 +94,16 @@ jobs:
         run: |
           [[ $OUTCOME == failure ]]
           [[ $(command -v python3) != "$RUNNER_TOOL_CACHE"/* ]] # caller's PATH untouched
+      # announce only warns: an unreachable host must not fail the build
+      - name: composite action announce (expected to succeed)
+        if: ${{ !cancelled() }}
+        uses: ./
+        with:
+          endpoint: http://127.0.0.1:9
+          site: demo
+          secret: dummy
+          action: announce
+          environment: next
       - name: nix flake check
         if: ${{ !cancelled() }}
         # package (unit tests with nixpkgs' python) and the NixOS VM test

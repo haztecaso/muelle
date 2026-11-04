@@ -44,7 +44,10 @@ set GitHub Deployment state
 
 `domain` is the single host muelle answers on: `/hooks/<site>` and
 `/status/<id>` for CI, and `/`, which lists every deployed next and preview
-environment (also as `index.json`). The listing reveals branch names and URLs,
+environment (also as `index.json`). Above them, per site, it lists the jobs of
+every env (prod included) that are building in CI, deploying, or failed in the
+last 7 days, linked to their GitHub Actions run; see
+[Listing jobs](#listing-jobs). The listing reveals branch names and URLs,
 so gate it, with `previewVhost` (which also gates next and previews) or
 `indexVhost` (this vhost only). Gate
 `location /` only: `/hooks/` and `/status/` are separate locations and must
@@ -226,6 +229,13 @@ jobs:
       contents: read
       deployments: write   # GitHub Deployment status (disable with `deployments: false`)
     steps:
+      - uses: haztecaso/muelle@<sha> # v1.0.0
+        with:   # optional: lists the build while it runs
+          endpoint: https://muelle.example.com
+          site: mysite
+          secret: ${{ secrets.MUELLE_SECRET }}
+          environment: ${{ github.ref_name == 'main' && 'prod' || github.ref_name == 'next' && 'next' || 'preview' }}
+          action: announce
       - uses: actions/checkout@v4
       - run: make build   # produces ./dist
       - id: upload
@@ -242,6 +252,14 @@ jobs:
           environment: ${{ github.ref_name == 'main' && 'prod' || github.ref_name == 'next' && 'next' || 'preview' }}
           artifact-id: ${{ steps.upload.outputs.artifact-id }}
           artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+      - if: failure() || cancelled()   # optional: lists the build as failed if it never deployed
+        uses: haztecaso/muelle@<sha> # v1.0.0
+        with:
+          endpoint: https://muelle.example.com
+          site: mysite
+          secret: ${{ secrets.MUELLE_SECRET }}
+          environment: ${{ github.ref_name == 'main' && 'prod' || github.ref_name == 'next' && 'next' || 'preview' }}
+          action: abort
 
   teardown:
     if: github.event_name == 'delete' && github.event.ref_type == 'branch'
@@ -258,7 +276,7 @@ jobs:
 ```
 
 Inputs: `endpoint`, `site`, `secret` (required); `action` (`deploy` |
-`teardown`), `environment` (`prod` | `next` | `preview`), `artifact-id`,
+`teardown` | `announce` | `abort`), `environment` (`prod` | `next` | `preview`), `artifact-id`,
 `artifact-digest`, `branch` (defaults to the triggering or deleted branch),
 `timeout-seconds` (600), `github-token` (`github.token`), `deployments`
 (`true`). Output: `url`.
@@ -269,6 +287,32 @@ Plain `http://` is accepted only for loopback hosts, or anywhere with
 
 The job's token stays valid while the action waits for the host, which is what
 lets the host download the artifact with it.
+
+### Listing jobs
+
+The host only hears of a deploy once the build is done, so on its own the
+listing shows a job from the deploy request on, which is seconds before it
+succeeds. Two optional steps cover the build itself:
+
+- `action: announce`, first in the job, lists the env and branch as
+  *building*, linked to the run.
+- `action: abort`, last, with `if: failure() || cancelled()`, lists it as
+  failed when the run ends before the deploy step got anywhere. It changes
+  nothing when a deploy of the same run already reached the host: a failed
+  deploy keeps its own message.
+
+Neither waits for the host, and both only warn when it cannot be reached or
+rejects them (an older host answers `invalid action`), so they never fail a
+build. The deploy request carries the run's URL too, so deployed environments
+link to the run that deployed them.
+
+Per site, the listing shows the newest job of each env (each branch for
+previews) while it is building or deploying, for up to an hour (a run that
+vanished without abort, a killed worker), and when it failed, for 7 days. A
+newer job, such as a successful deploy or a teardown of the branch, replaces
+it. While a job is pending, the page reloads every 15 seconds. The listing is
+regenerated on each hook request and at least daily (by `muelle-prune.timer`), so
+a pending job past its hour can linger until then.
 
 ### Versioning
 
@@ -318,6 +362,7 @@ A zip artifact with a single top-level directory is unwrapped, so uploading
   "sha256": "<64 hex, of the artifact file>",
   "artifact_url": "https://api.github.com/repos/octocat/mysite/actions/artifacts/<id>/zip",
   "token": "<GITHUB_TOKEN>",
+  "run_url": "https://github.com/octocat/mysite/actions/runs/<id>",
   "ts": 1730000000
 }
 ```
@@ -325,8 +370,16 @@ A zip artifact with a single top-level directory is unwrapped, so uploading
 Header: `X-Muelle-Signature: sha256=<hex hmac of the raw body>`.
 Teardown: `action: "teardown"`, `env: "preview"`, `branch`; removes every
 preview slot deployed from that branch.
+Announce and abort: `action: "announce"` or `"abort"` with `env`, `branch`,
+`sha` and `run_url`, without `sha256`, `artifact_url` and `token`; they only
+update the listing.
 
-Responses: `200` with `{id, state, url, status_url}` when queued; `500` with
+`run_url` is optional in every payload; when present it must be
+`https://github.com/<the site's repo>/actions/runs/<digits>`. Hosts that
+predate it ignore it.
+
+Responses: `200` with `{id, state, url, status_url}` when queued (announce and
+abort: `{id, state, url}`, with `state` `queued`, `failure` or `ignored`); `500` with
 the reason when the signature or the payload is rejected (webhook reports HMAC
 mismatches as 500 too). `GET /status/<id>` returns
 `{id, state: queued|in_progress|success|failure, message, url, updated}`.

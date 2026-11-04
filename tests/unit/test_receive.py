@@ -1,6 +1,6 @@
 import dataclasses
 import json
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -213,3 +213,81 @@ def test_main_reports_errors_on_stderr(
     monkeypatch.setenv("MUELLE_PAYLOAD", json.dumps(deploy()))
     assert receive.main(["demo"]) == 1
     assert "muelle: unknown site" in capsys.readouterr().err
+
+
+RUN = "https://github.com/owner/demo/actions/runs/7"
+
+
+def notice(action: Literal["announce", "abort"] = "announce", **overrides: Any) -> dict[str, Any]:
+    payload = protocol.notice_payload(
+        id="test-0100", site="demo", action=action, env="next", branch="main", sha=SHA, run_url=RUN, ts=NOW
+    )
+    payload.update(overrides)
+    return payload
+
+
+def test_run_url_is_optional_and_checked(config: Config) -> None:
+    validate(deploy(run_url=RUN), "demo", config, NOW)
+    validate(deploy(run_url=""), "demo", config, NOW)
+    for bad in [
+        "https://github.com/other/demo/actions/runs/7",
+        "https://github.com/owner/demo/actions/runs/7/attempts/2",
+        "https://github.com/owner/demo/actions/runs/x",
+        "http://github.com/owner/demo/actions/runs/7",
+        "https://github.com.evil/owner/demo/actions/runs/7",
+    ]:
+        assert rejected(deploy(run_url=bad), config) == "invalid run_url"
+
+
+def test_valid_notices(config: Config) -> None:
+    assert validate(notice(), "demo", config, NOW) == "https://next-demo.muelle.test"
+    assert validate(notice("abort"), "demo", config, NOW) == "https://next-demo.muelle.test"
+    assert validate(notice(run_url=""), "demo", config, NOW) == "https://next-demo.muelle.test"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"sha": ""}, "invalid sha"),
+        ({"env": "staging"}, "invalid env"),
+        ({"env": "prod", "branch": "feat/x"}, "may not deploy to prod"),
+    ],
+)
+def test_notice_rejections(config: Config, overrides: dict[str, Any], message: str) -> None:
+    assert message in rejected(notice(**overrides), config)
+
+
+def no_spawn(_config: Config, _id: str) -> None:
+    raise AssertionError("notices do not start a worker")
+
+
+def listed(config: Config) -> list[tuple[str, str, str]]:
+    data = json.loads((config.state_dir / "index" / "index.json").read_text())
+    return [(j["action"], j["state"], j["message"]) for j in data["jobs"]]
+
+
+def test_handle_announce_lists_the_build(config: Config) -> None:
+    response = receive.handle(json.dumps(notice()), "demo", config, NOW, spawn=no_spawn)
+    assert response == {"id": "test-0100", "state": "queued", "url": "https://next-demo.muelle.test"}
+    assert not (config.state_dir / "spool" / "test-0100.json").exists()
+    assert config.state.read_job("test-0100")["run_url"] == RUN
+    assert listed(config) == [("announce", "queued", "building in CI")]
+    with pytest.raises(Rejected, match="id already used"):
+        receive.handle(json.dumps(notice()), "demo", config, NOW, spawn=no_spawn)
+
+
+def test_handle_abort_fails_the_announce_of_the_same_run(config: Config) -> None:
+    receive.handle(json.dumps(notice()), "demo", config, NOW, spawn=no_spawn)
+    other = notice("abort", id="test-0101", run_url="https://github.com/owner/demo/actions/runs/8")
+    assert receive.handle(json.dumps(other), "demo", config, NOW, spawn=no_spawn)["state"] == "ignored"
+    assert not config.state.status_path("test-0101").exists()
+    response = receive.handle(json.dumps(notice("abort", id="test-0102")), "demo", config, NOW, spawn=no_spawn)
+    assert response["state"] == "failure"
+    assert listed(config) == [("abort", "failure", "failed: build failed or was cancelled in CI")]
+
+
+def test_handle_abort_leaves_a_deploy_alone(config: Config) -> None:
+    receive.handle(json.dumps(notice()), "demo", config, NOW, spawn=no_spawn)
+    receive.handle(json.dumps(deploy(id="test-0103", run_url=RUN)), "demo", config, NOW, spawn=lambda _c, _id: None)
+    response = receive.handle(json.dumps(notice("abort", id="test-0104")), "demo", config, NOW, spawn=no_spawn)
+    assert response["state"] == "ignored"

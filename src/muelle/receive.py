@@ -2,7 +2,8 @@
 
 Run by webhook after the HMAC rule has passed, with the request body in
 $MUELLE_PAYLOAD. Validates it against the Nix-declared site table, queues it in
-the spool dir and detaches the worker. Stdout is the HTTP response body; a
+the spool dir and detaches the worker. Announce and abort only update the
+listing: no spool, no worker. Stdout is the HTTP response body; a
 non-zero exit makes webhook answer 500 with the stderr message.
 """
 
@@ -14,7 +15,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from . import protocol
+from . import index, protocol
 from .config import Config
 from .state import StateDir
 
@@ -29,6 +30,7 @@ _BRANCH = re.compile(r"[A-Za-z0-9._/-]{1,200}")
 _SHA = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _ARTIFACT_URL = re.compile(r"[A-Za-z0-9._/:?=&%-]+")
+_RUN_ID = r"/actions/runs/[0-9]{1,20}"
 
 
 def field(payload: dict[str, Any], key: str) -> str:
@@ -72,8 +74,12 @@ def validate(payload: object, hook_site: str, config: Config, now: int) -> str:
     _check(_BRANCH, branch, "invalid branch")
     if ".." in branch:
         raise Rejected("invalid branch")
+    # optional: only linked from the listing, and only to the site's own repo
+    run_url = field(payload, "run_url")
+    if run_url and not re.fullmatch(rf"https://github\.com/{re.escape(config.sites[site].repo)}{_RUN_ID}", run_url):
+        raise Rejected("invalid run_url")
 
-    if action == "deploy":
+    if action in ("deploy", "announce", "abort"):
         if env not in protocol.ENVS:
             raise Rejected("invalid env")
         if env not in config.sites[site].envs:
@@ -82,6 +88,8 @@ def validate(payload: object, hook_site: str, config: Config, now: int) -> str:
         if env == "prod" and prod_branches is not None and branch not in prod_branches:
             raise Rejected(f"branch '{branch}' may not deploy to prod (allowed: {', '.join(prod_branches)})")
         _check(_SHA, sha, "invalid sha")
+        if action != "deploy":
+            return config.slot_url(site, env, branch, sha)
         _check(_SHA256, field(payload, "sha256"), "invalid sha256")
         artifact_url = field(payload, "artifact_url")
         prefix = config.sites[site].artifact_url_prefix
@@ -108,6 +116,28 @@ def spool(state: StateDir, id: str, raw: str) -> None:
         raise Rejected("id already used") from None
     with os.fdopen(fd, "w") as f:
         f.write(raw)
+
+
+def notice(config: Config, id: str, job: dict[str, str], url: str) -> dict[str, str]:
+    """Records an announce (building in CI) or an abort (that build failed or was
+    cancelled), then refreshes the listing. An abort only fails the announce of the same
+    run that is still the newest job for its env/branch: a deploy that got further
+    already has its own state."""
+    state = config.state
+    if state.status_path(id).exists():
+        raise Rejected("id already used")
+    if job["action"] == "abort":
+        latest = index.latest_jobs(state.jobs()).get(index.job_key(job), {})
+        same_run = all(latest.get(k) == job[k] for k in ("sha", "run_url"))
+        if latest.get("action") != "announce" or not same_run:
+            return {"id": id, "state": "ignored", "url": url}
+    state.write_job(id, **job, url=url)
+    if job["action"] == "announce":
+        state.write_status(id, "queued", "building in CI", url)
+    else:
+        state.write_status(id, "failure", "failed: build failed or was cancelled in CI", url)
+    index.write(config)
+    return {"id": id, "state": "queued" if job["action"] == "announce" else "failure", "url": url}
 
 
 def detach_worker(config: Config, id: str) -> None:
@@ -148,8 +178,10 @@ def handle(
         raise Rejected("payload is not a JSON object") from None
     url = validate(payload, hook_site, config, now)
     id = field(payload, "id")
+    job = {key: field(payload, key) for key in ("site", "action", "env", "branch", "sha", "run_url")}
+    if job["action"] in ("announce", "abort"):
+        return notice(config, id, job, url)
     spool(config.state, id, raw)
-    job = {key: field(payload, key) for key in ("site", "action", "env", "branch", "sha")}
     config.state.write_job(id, **job, url=url)
     config.state.write_status(id, "queued", "queued", url)
     spawn(config, id)

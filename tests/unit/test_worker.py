@@ -228,3 +228,49 @@ def test_unexpected_error_is_not_exposed(
     out = capsys.readouterr().out
     assert f"failed: OSError: cannot write {config.base_dir}/secret" in out
     assert "Traceback" in out
+
+
+def listed(config: Config) -> list[tuple[str, str]]:
+    data = json.loads((config.state_dir / "index" / "index.json").read_text())
+    return [(j["state"], j["message"]) for j in data["jobs"]]
+
+
+def test_listing_follows_the_job(config: Config, artifacts: FakeArtifacts) -> None:
+    run = "https://github.com/owner/demo/actions/runs/7"
+    url, digest = artifacts.add("listed.zip", make_zip({"index.html": "x"}))
+    payload = protocol.deploy_payload(
+        id="",
+        site="demo",
+        env="next",
+        branch="main",
+        sha=SHA1,
+        sha256=digest,
+        artifact_url=url,
+        token="",
+        ts=0,
+        run_url=run,
+    )
+    id = spool(config, payload)
+    config.state.write_job(id, site="demo", action="deploy", env="next", branch="main", sha=SHA1)
+    config.state.write_status(id, "queued", "queued")
+    seen: list[list[tuple[str, str]]] = []
+
+    def fetch(url: str, dest: Path, **kw: Any) -> None:
+        seen.append(listed(config))
+        artifacts(url, dest, **kw)
+
+    assert worker.run(config, id, fetch=fetch) == 0
+    assert seen == [[("queued", "queued")]]
+    assert listed(config) == []
+    assert json.loads((config.base_dir / "demo" / "next" / "meta.json").read_text())["run_url"] == run
+
+
+def test_listing_shows_failed_job(config: Config, artifacts: FakeArtifacts) -> None:
+    url, _ = artifacts.add("junk.zip", b"junk")
+    payload = protocol.deploy_payload(
+        id="", site="demo", env="next", branch="main", sha=SHA1, sha256="0" * 64, artifact_url=url, token="", ts=0
+    )
+    id = spool(config, payload)
+    config.state.write_job(id, site="demo", action="deploy", env="next", branch="main", sha=SHA1)
+    assert worker.run(config, id, fetch=artifacts) == 1
+    assert listed(config) == [("failure", "failed: sha256 mismatch")]

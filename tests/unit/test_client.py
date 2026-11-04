@@ -62,6 +62,7 @@ def test_settings_resolves_artifact_id() -> None:
         ({"MUELLE_SHA": "abc"}, "invalid or missing commit sha"),
         ({"MUELLE_SHA256": ""}, "MUELLE_SHA256 is required"),
         ({"MUELLE_ACTION": "explode"}, "invalid action 'explode'"),
+        ({"MUELLE_ACTION": "announce", "MUELLE_SHA": ""}, "invalid or missing commit sha"),
     ],
 )
 def test_settings_errors(override: dict[str, str], message: str) -> None:
@@ -98,6 +99,33 @@ def test_teardown_needs_no_artifact() -> None:
                            "MUELLE_ACTION": "teardown", "MUELLE_BRANCH": "b"})  # fmt: skip
     payload = client.build_payload(s, "id-000001", 5)
     assert payload == protocol.teardown_payload(id="id-000001", site="demo", branch="b", ts=5)
+
+
+def test_notices_need_no_artifact_and_carry_the_run() -> None:
+    env = {"MUELLE_ENDPOINT": "https://x", "MUELLE_SITE": "demo", "MUELLE_SECRET": "s", "MUELLE_BRANCH": "b",
+           "MUELLE_SHA": SHA, "MUELLE_ENV": "next",
+           "GITHUB_REPOSITORY": "owner/demo", "GITHUB_RUN_ID": "7"}  # fmt: skip
+    for action in ("announce", "abort"):
+        payload = client.build_payload(settings_from_env({**env, "MUELLE_ACTION": action}), "id-000001", 5)
+        assert payload == protocol.notice_payload(
+            id="id-000001",
+            site="demo",
+            action=action,
+            env="next",
+            branch="b",
+            sha=SHA,
+            run_url="https://github.com/owner/demo/actions/runs/7",
+            ts=5,
+        )
+
+
+def test_run_url_only_for_github_com() -> None:
+    env = {**BASE_ENV, "GITHUB_REPOSITORY": "owner/demo", "GITHUB_RUN_ID": "7"}
+    deploy = client.build_payload(settings_from_env(env), "id-000001", 5)
+    assert deploy["run_url"] == "https://github.com/owner/demo/actions/runs/7"
+    assert client.build_payload(settings_from_env(BASE_ENV), "id-000001", 5)["run_url"] == ""
+    ghes = settings_from_env({**env, "GITHUB_SERVER_URL": "https://ghe.example.com"})
+    assert client.build_payload(ghes, "id-000001", 5)["run_url"] == ""
 
 
 def test_request_id_is_sanitized() -> None:
@@ -203,6 +231,25 @@ def test_run_without_deployments_skips_github(tmp_path: Path) -> None:
     assert not any("api.github.com" in url for url, _ in http.calls)
 
 
+@pytest.mark.parametrize("hook", [(200, b"{}"), (500, b"muelle: invalid action")])
+def test_notices_never_fail_the_build(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], hook: tuple[int, bytes]
+) -> None:
+    http = FakeGitHubHttp(hook, [])
+    assert client.run(github_settings(tmp_path, MUELLE_ACTION="announce"), http=http) == 0
+    # one request: no polling, no GitHub Deployment
+    assert [url for url, _ in http.calls] == ["https://muelle.test/hooks/demo"]
+    out = capsys.readouterr().out
+    assert ("::warning::muelle announce not recorded (500)" in out) == (hook[0] == 500)
+
+
+def test_notice_survives_unreachable_host(tmp_path: Path) -> None:
+    def http(*_a: Any, **_kw: Any) -> tuple[int, bytes]:
+        raise OSError("connection refused")
+
+    assert client.run(github_settings(tmp_path, MUELLE_ACTION="abort"), http=http) == 0
+
+
 # End to end over real HTTP: client -> fake host (HMAC check like webhook,
 # then muelle.receive) -> muelle.worker, with status served from disk.
 
@@ -288,3 +335,18 @@ def test_end_to_end_failed_deploy(
     env = {**BASE_ENV, "MUELLE_ENDPOINT": endpoint, "MUELLE_DEPLOYMENTS": "false", "MUELLE_POLL_INTERVAL": "0.05"}
     assert client.run(settings_from_env(env)) == 1
     assert "::error::muelle failure: failed: sha256 mismatch" in capsys.readouterr().out
+
+
+def test_end_to_end_announce_and_abort(config: Config, host: tuple[str, dict[str, bytes]]) -> None:
+    endpoint, _ = host
+    env = {**BASE_ENV, "MUELLE_ENDPOINT": endpoint, "GITHUB_REPOSITORY": "owner/demo", "GITHUB_RUN_ID": "7"}
+
+    def listed() -> list[tuple[str, str, str]]:
+        data = json.loads((config.state_dir / "index" / "index.json").read_text())
+        return [(j["action"], j["state"], j["run_url"]) for j in data["jobs"]]
+
+    run = "https://github.com/owner/demo/actions/runs/7"
+    assert client.run(settings_from_env({**env, "MUELLE_ACTION": "announce"})) == 0
+    assert listed() == [("announce", "queued", run)]
+    assert client.run(settings_from_env({**env, "MUELLE_ACTION": "abort"})) == 0
+    assert listed() == [("abort", "failure", run)]
