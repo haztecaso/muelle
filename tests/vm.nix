@@ -13,9 +13,8 @@
         defaults.email = "test@example.test";
         defaults.server = "https://127.0.0.1/unreachable";
         defaults.dnsProvider = "cloudflare";
-        certs."p.test".extraDomainNames = [
-          "muelle.p.test"
-          "*.p.test"
+        certs."muelle.test".extraDomainNames = [
+          "*.muelle.test"
         ];
         certs."demo.test".extraDomainNames = [ "*.demo.test" ];
       };
@@ -56,9 +55,14 @@
 
       services.muelle = {
         enable = true;
-        domain = "muelle.p.test";
-        previewDomain = "p.test";
-        acmeHost = "p.test";
+        domain = "muelle.test";
+        acmeHost = "muelle.test";
+        # stand-in for an auth gate on the listing: /hooks/ and /status/ must stay open
+        indexVhost.locations."/".extraConfig = ''
+          if ($http_x_gate != "open") {
+            return 401;
+          }
+        '';
         artifactUrlBase = "http://127.0.0.1:8080/repos";
         hookRateLimit = "600r/m";
         accessLogFormat = "withHost";
@@ -87,7 +91,7 @@
     machine.wait_for_open_port(9077)
 
     RESOLVE = " ".join(f"--resolve {h}:443:127.0.0.1" for h in
-      ["muelle.p.test", "p.test", "demo.test", "next.demo.test", "next-demo.p.test", "prod-demo.p.test"])
+      ["muelle.test", "demo.test", "next.demo.test", "next-demo.muelle.test", "prod-demo.muelle.test"])
     counter = [0]
 
     def make_artifact(name, content, kind="zip"):
@@ -113,7 +117,7 @@
         out = machine.succeed(
           f"curl -sk {RESOLVE} -o /tmp/resp -w '%{{http_code}}' "
           f"-H 'Content-Type: application/json' -H 'X-Muelle-Signature: sha256={sig}' "
-          f"--data-binary @/tmp/body.json https://muelle.p.test/hooks/{site}"
+          f"--data-binary @/tmp/body.json https://muelle.test/hooks/{site}"
         )
         resp = machine.succeed("cat /tmp/resp")
         assert out == str(expect_code), f"expected {expect_code}, got {out}: {resp}"
@@ -121,7 +125,7 @@
 
     def wait_status(id, want="success"):
         for _ in range(60):
-            s = json.loads(machine.succeed(f"curl -sk {RESOLVE} https://muelle.p.test/status/{id}"))
+            s = json.loads(machine.succeed(f"curl -sk {RESOLVE} https://muelle.test/status/{id}"))
             if s["state"] in ("success", "failure"):
                 assert s["state"] == want, f"status: {s}"
                 return s
@@ -162,14 +166,17 @@
     with subtest("next deploy and apex redirect"):
         id, _ = deploy("demo", "next", SHA1, "c.zip")
         wait_status(id)
-        machine.succeed(f"curl -sk {RESOLVE} https://next-demo.p.test/ | grep next-1111111")
+        machine.succeed(f"curl -sk {RESOLVE} https://next-demo.muelle.test/ | grep next-1111111")
         loc = machine.succeed(f"curl -sk {RESOLVE} -o /dev/null -w '%{{redirect_url}}' https://next.demo.test/x")
-        assert loc == "https://next-demo.p.test/x", loc
-        # prod is never served on the preview domain
-        machine.fail(f"curl -skf {RESOLVE} https://prod-demo.p.test/")
-        idx = json.loads(machine.succeed(f"curl -skf {RESOLVE} https://p.test/index.json"))
-        assert [(e["site"], e["env"], e["url"]) for e in idx["entries"]] == [("demo", "next", "https://next-demo.p.test")], idx
-        machine.succeed(f"curl -skf {RESOLVE} https://p.test/ | grep -F 'href=\"https://next-demo.p.test\"'")
+        assert loc == "https://next-demo.muelle.test/x", loc
+        # prod is never served under the muelle domain
+        machine.fail(f"curl -skf {RESOLVE} https://prod-demo.muelle.test/")
+        idx = json.loads(machine.succeed(f"curl -skf {RESOLVE} -H 'X-Gate: open' https://muelle.test/index.json"))
+        assert [(e["site"], e["env"], e["url"]) for e in idx["entries"]] == [("demo", "next", "https://next-demo.muelle.test")], idx
+        machine.succeed(f"curl -skf {RESOLVE} -H 'X-Gate: open' https://muelle.test/ | grep -F 'href=\"https://next-demo.muelle.test\"'")
+        # the gate on the listing leaves /hooks/ and /status/ (used above) alone
+        code = machine.succeed(f"curl -sk {RESOLVE} -o /dev/null -w '%{{http_code}}' https://muelle.test/index.json")
+        assert code == "401", code
 
     with subtest("preview deploy and teardown"):
         id, resp = deploy("demo", "preview", SHA2, "d.zip", branch="feat/x")
@@ -177,13 +184,13 @@
         host = url.removeprefix("https://")
         wait_status(id)
         machine.succeed(f"curl -sk --resolve {host}:443:127.0.0.1 {url}/ | grep preview-2222222")
-        page = machine.succeed(f"curl -skf {RESOLVE} https://p.test/")
+        page = machine.succeed(f"curl -skf {RESOLVE} -H 'X-Gate: open' https://muelle.test/")
         assert url in page and "feat/x" in page, page
         id, _ = post("demo", {"action": "teardown", "env": "preview", "branch": "feat/x"}, "deadbeef")
         wait_status(id)
         machine.succeed(f"curl -sk --resolve {host}:443:127.0.0.1 -o /dev/null -w '%{{http_code}}' {url}/ | grep 404")
-        page = machine.succeed(f"curl -skf {RESOLVE} https://p.test/")
-        assert url not in page and "next-demo.p.test" in page, page
+        page = machine.succeed(f"curl -skf {RESOLVE} -H 'X-Gate: open' https://muelle.test/")
+        assert url not in page and "next-demo.muelle.test" in page, page
 
     # webhook answers an HMAC mismatch with 500 "Error occurred while evaluating hook rules."
     with subtest("bad signature is rejected"):
@@ -232,13 +239,13 @@
                                "artifact_url": "http://127.0.0.1:8080/repos/owner/demo/evil.tgz"}, "deadbeef")
         s = wait_status(id, "failure")
         assert "non-regular" in s["message"], s
-        machine.succeed(f"curl -sk {RESOLVE} https://next-demo.p.test/ | grep next-2222222")
+        machine.succeed(f"curl -sk {RESOLVE} https://next-demo.muelle.test/ | grep next-2222222")
 
     def client(extra, check=True):
         env = {
-            "MUELLE_ENDPOINT": "https://muelle.p.test", "MUELLE_SITE": "demo",
+            "MUELLE_ENDPOINT": "https://muelle.test", "MUELLE_SITE": "demo",
             "MUELLE_SECRET": "deadbeef", "MUELLE_DEPLOYMENTS": "false",
-            "MUELLE_CURL_OPTS": "-k --resolve muelle.p.test:443:127.0.0.1",
+            "MUELLE_CURL_OPTS": "-k --resolve muelle.test:443:127.0.0.1",
             "MUELLE_POLL_INTERVAL": "1", "MUELLE_TIMEOUT": "60",
             "GITHUB_OUTPUT": "/tmp/gh-output", "GITHUB_RUN_ID": "99",
         } | extra
@@ -252,7 +259,7 @@
                       "MUELLE_SHA256": f"sha256:{digest}", "MUELLE_TOKEN": "ghs_dummy"})
         assert "muelle: success" in out, out
         url = machine.succeed("sed -n 's/^url=//p' /tmp/gh-output").strip()
-        assert url.endswith("-demo.p.test"), url
+        assert url.endswith("-demo.muelle.test"), url
         host = url.removeprefix("https://")
         machine.succeed(f"curl -sk --resolve {host}:443:127.0.0.1 {url}/ | grep client-preview")
         client({"MUELLE_ACTION": "teardown", "MUELLE_BRANCH": "feat/client"})
@@ -272,7 +279,7 @@
         machine.succeed("! journalctl -u webhook | grep -q ghs_dummy")
         id, _ = deploy("demo", "next", SHA1, "after-restart.zip")
         wait_status(id)
-        machine.succeed(f"curl -sk {RESOLVE} https://next-demo.p.test/ | grep next-1111111")
+        machine.succeed(f"curl -sk {RESOLVE} https://next-demo.muelle.test/ | grep next-1111111")
 
     with subtest("dotdot paths are rejected"):
         machine.succeed("cd /tmp && rm -rf dd && mkdir -p dd/a && echo x > dd/x && cd dd/a && tar -czPf /srv/artifacts/repos/owner/demo/dd.tgz ../x")

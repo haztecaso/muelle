@@ -83,7 +83,7 @@ let
           example = [ "example.com" ];
           description = ''
             Apex domains whose `next.<apex>` and `<hash>.<apex>` subdomains 302 to the
-            preview domain. Each apex needs an ACME cert of the same name covering `*.<apex>`.
+            `<slot>-<site>.<domain>`. Each apex needs an ACME cert of the same name covering `*.<apex>`.
           '';
         };
         previewVhost = mkOption {
@@ -106,7 +106,6 @@ let
   configFile = (pkgs.formats.json { }).generate "muelle-config.json" {
     inherit (cfg)
       domain
-      previewDomain
       baseDir
       stateDir
       maxSkew
@@ -164,7 +163,7 @@ let
     lib.nameValuePair "muelle-preview-${name}" (mkMerge [
       {
         # quoted: nginx needs quotes around regexes containing '{'
-        serverName = "\"~^(?!prod-)(?<muelle_slot>[a-z0-9]+)-${escapeRe name}\\.${escapeRe cfg.previewDomain}$\"";
+        serverName = "\"~^(?!prod-)(?<muelle_slot>[a-z0-9]+)-${escapeRe name}\\.${escapeRe cfg.domain}$\"";
         useACMEHost = cfg.acmeHost;
         forceSSL = true;
         root = "${cfg.baseDir}/${name}/$muelle_slot/current";
@@ -206,7 +205,7 @@ let
             serverName = "\"~^(?<muelle_slot>next|[0-9a-f]{8})\\.${escapeRe apex}$\"";
             useACMEHost = apex;
             forceSSL = true;
-            locations."/".return = "302 https://$muelle_slot-${name}.${cfg.previewDomain}$request_uri";
+            locations."/".return = "302 https://$muelle_slot-${name}.${cfg.domain}$request_uri";
           }
         ) s.redirectFrom
       ) cfg.sites
@@ -214,22 +213,29 @@ let
   );
 in
 {
+  imports = [
+    (lib.mkRemovedOptionModule [
+      "services"
+      "muelle"
+      "previewDomain"
+    ] "next and preview environments are now served under `services.muelle.domain`.")
+  ];
+
   options.services.muelle = {
     enable = mkEnableOption "muelle deploy receiver";
 
     domain = mkOption {
       type = types.str;
       example = "muelle.example.com";
-      description = "Host serving `/hooks/<site>` and `/status/<id>`.";
-    };
-    previewDomain = mkOption {
-      type = types.str;
-      example = "p.example.com";
-      description = "Domain under which `next-<site>` and `<hash>-<site>` are served.";
+      description = ''
+        Host serving `/hooks/<site>`, `/status/<id>` and the listing of
+        next/preview environments at `/`. Those environments are served at
+        `next-<site>.<domain>` and `<hash>-<site>.<domain>`.
+      '';
     };
     acmeHost = mkOption {
       type = types.str;
-      description = "ACME cert (security.acme.certs name) covering `domain` and `*.previewDomain`.";
+      description = "ACME cert (security.acme.certs name) covering `domain` and `*.<domain>`.";
     };
     baseDir = mkOption {
       type = types.str;
@@ -298,8 +304,10 @@ in
         enableAuth = true;
       };
       description = ''
-        Extra nginx vhost attributes for the listing of next/preview deployments
-        served at `previewDomain`. Gate it: it reveals branch names and URLs.
+        Extra nginx vhost attributes for the `domain` vhost, whose `/` lists the
+        next/preview deployments. Gate it: it reveals branch names and URLs.
+        Gate `location /` only (as `enableAuth`-style modules do): `/hooks/` and
+        `/status/` are separate locations and must stay reachable from CI.
       '';
     };
     sites = mkOption {
@@ -387,36 +395,30 @@ in
 
     services.nginx.virtualHosts = mkMerge [
       {
-        ${cfg.domain} = {
-          useACMEHost = cfg.acmeHost;
-          forceSSL = true;
-          locations."/".return = "404";
-          locations."/hooks/" = {
-            proxyPass = "http://127.0.0.1:${toString cfg.port}";
-            extraConfig = ''
-              limit_req zone=muelle_hooks burst=5 nodelay;
-              client_max_body_size 64k;
-            '';
-          };
-          locations."~ ^/status/(?<muelle_id>[A-Za-z0-9-]+)$" = {
-            alias = "${cfg.stateDir}/status/$muelle_id.json";
-            extraConfig = ''
-              default_type application/json;
-              add_header Cache-Control "no-store" always;
-            '';
-          };
-        };
-      }
-      {
-        ${cfg.previewDomain} = mkMerge [
+        ${cfg.domain} = mkMerge [
           {
             useACMEHost = cfg.acmeHost;
             forceSSL = true;
+            # listing of next/preview environments
             root = "${cfg.stateDir}/index";
             extraConfig = ''
               add_header X-Robots-Tag "noindex, nofollow" always;
               add_header Cache-Control "no-store" always;
             '';
+            locations."/hooks/" = {
+              proxyPass = "http://127.0.0.1:${toString cfg.port}";
+              extraConfig = ''
+                limit_req zone=muelle_hooks burst=5 nodelay;
+                client_max_body_size 64k;
+              '';
+            };
+            locations."~ ^/status/(?<muelle_id>[A-Za-z0-9-]+)$" = {
+              alias = "${cfg.stateDir}/status/$muelle_id.json";
+              extraConfig = ''
+                default_type application/json;
+                add_header Cache-Control "no-store" always;
+              '';
+            };
           }
           cfg.indexVhost
         ];
