@@ -65,15 +65,16 @@ code { font-size: 13px; }
 EOF
   jq -r '
     def h: tostring | @html;
+    def a($href; $text): "<a href=\"\($href | h)\" target=\"_blank\" rel=\"noopener noreferrer\">\($text)</a>";
     "<p class=\"meta\">\(length) deployment(s) &middot; generated \(now | todate)</p>",
     (if length == 0 then "<p class=\"empty\">Nothing deployed to next or preview.</p>" else empty end),
     (group_by(.site)[] |
-      "<h2>\(.[0].site | h)<a href=\"\(.[0].prod | h)\">prod</a></h2>",
+      "<h2>\(.[0].site | h)\(a(.[0].prod; "prod"))</h2>",
       "<table><tr><th>env</th><th>branch</th><th>commit</th><th class=\"when\">deployed</th></tr>",
       (.[] |
-        "<tr><td><a class=\"env\" href=\"\(.url | h)\">\(if .env == "next" then "next" else .slot end | h)</a></td>" +
-        "<td>\(.branch | h)</td>" +
-        "<td><a href=\"https://github.com/\(.repo | h)/commit/\(.sha | h)\"><code>\(.sha[0:7] | h)</code></a></td>" +
+        "<tr><td>\(a(.url; "<span class=\"env\">\(if .env == "next" then "next" else .slot end | h)</span>"))</td>" +
+        "<td>\(a("https://github.com/\(.repo)/tree/\(.branch)"; .branch | h))</td>" +
+        "<td>\(a("https://github.com/\(.repo)/commit/\(.sha)"; "<code>\(.sha[0:7] | h)</code>"))</td>" +
         "<td class=\"when\">\(.deployed_at | h)</td></tr>"),
       "</table>")
   ' <<<"$entries"
