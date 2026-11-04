@@ -69,8 +69,32 @@ def test_settings_errors(override: dict[str, str], message: str) -> None:
         settings_from_env({**BASE_ENV, **override})
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    ["https://muelle.test", "http://127.0.0.1:9", "http://localhost:8080/", "http://[::1]:9"],
+)
+def test_endpoint_accepted(endpoint: str) -> None:
+    settings_from_env({**BASE_ENV, "MUELLE_ENDPOINT": endpoint})
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    ["http://muelle.test", "http://127.0.0.1.evil.test", "ftp://muelle.test", "muelle.test", "http://"],
+)
+def test_endpoint_refused(endpoint: str) -> None:
+    with pytest.raises(ClientError, match="MUELLE_ENDPOINT must"):
+        settings_from_env({**BASE_ENV, "MUELLE_ENDPOINT": endpoint})
+
+
+def test_endpoint_allow_insecure() -> None:
+    env = {**BASE_ENV, "MUELLE_ENDPOINT": "http://10.0.0.5", "MUELLE_ALLOW_INSECURE": "true"}
+    assert settings_from_env(env).endpoint == "http://10.0.0.5"
+    with pytest.raises(ClientError, match="must be an https"):
+        settings_from_env({**env, "MUELLE_ENDPOINT": "ftp://10.0.0.5"})
+
+
 def test_teardown_needs_no_artifact() -> None:
-    s = settings_from_env({"MUELLE_ENDPOINT": "x", "MUELLE_SITE": "demo", "MUELLE_SECRET": "s",
+    s = settings_from_env({"MUELLE_ENDPOINT": "https://x", "MUELLE_SITE": "demo", "MUELLE_SECRET": "s",
                            "MUELLE_ACTION": "teardown", "MUELLE_BRANCH": "b"})  # fmt: skip
     payload = client.build_payload(s, "id-000001", 5)
     assert payload == protocol.teardown_payload(id="id-000001", site="demo", branch="b", ts=5)

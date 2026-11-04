@@ -197,6 +197,10 @@ Inputs: `endpoint`, `site`, `secret` (required); `action` (`deploy` |
 `timeout-seconds` (600), `github-token` (`github.token`), `deployments`
 (`true`). Output: `url`.
 
+`endpoint` must be `https://`: the request body carries the job's token.
+Plain `http://` is accepted only for loopback hosts, or anywhere with
+`MUELLE_ALLOW_INSECURE=true` in the job's environment.
+
 The job's token stays valid while the action waits for the host, which is what
 lets the host download the artifact with it.
 

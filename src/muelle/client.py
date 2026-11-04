@@ -8,7 +8,12 @@ Deploy:   MUELLE_SHA256 and either MUELLE_ARTIFACT_URL or MUELLE_ARTIFACT_ID
 Optional: MUELLE_ACTION (deploy), MUELLE_ENV (preview), MUELLE_BRANCH, MUELLE_SHA,
           MUELLE_TOKEN (sent for the artifact download), MUELLE_TIMEOUT (600),
           MUELLE_POLL_INTERVAL (3), MUELLE_DEPLOYMENTS (true: report GitHub
-          Deployment state, authenticated with GH_TOKEN or MUELLE_TOKEN)
+          Deployment state, authenticated with GH_TOKEN or MUELLE_TOKEN),
+          MUELLE_ALLOW_INSECURE (false: allow http:// to non-loopback hosts)
+
+The endpoint must be https://, except for loopback hosts: the body carries
+the GITHUB_TOKEN used for the artifact download, and the HMAC signature
+authenticates it without hiding it.
 
 TLS uses the system trust store; point SSL_CERT_FILE at a CA bundle to trust
 a private CA.
@@ -23,6 +28,7 @@ import secrets
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -81,6 +87,22 @@ def _require(env: Mapping[str, str], name: str, hint: str = "") -> str:
     return value
 
 
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
+def check_endpoint(endpoint: str, allow_insecure: bool = False) -> None:
+    """Refuses endpoints that would send the token in cleartext."""
+    url = urllib.parse.urlsplit(endpoint)
+    if url.scheme == "https":
+        return
+    if url.scheme != "http" or not url.hostname:
+        raise ClientError(f"MUELLE_ENDPOINT must be an https:// URL: {endpoint}")
+    if url.hostname not in LOOPBACK_HOSTS and not allow_insecure:
+        raise ClientError(
+            f"MUELLE_ENDPOINT must use https:// (got {endpoint}); set MUELLE_ALLOW_INSECURE=true to override"
+        )
+
+
 def settings_from_env(env: Mapping[str, str]) -> Settings:
     """Reads and checks the MUELLE_* / GITHUB_* variables."""
     github = GitHub(
@@ -94,6 +116,7 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
         step_summary=env.get("GITHUB_STEP_SUMMARY", ""),
     )
     endpoint = _require(env, "MUELLE_ENDPOINT").rstrip("/")
+    check_endpoint(endpoint, (env.get("MUELLE_ALLOW_INSECURE") or "false") == "true")
     site = _require(env, "MUELLE_SITE")
     secret = _require(env, "MUELLE_SECRET")
     action = env.get("MUELLE_ACTION") or "deploy"
