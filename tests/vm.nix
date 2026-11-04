@@ -283,6 +283,19 @@
         wait_status(id)
         machine.succeed(f"curl -sk {RESOLVE} https://next-demo.muelle.test/ | grep next-1111111")
 
+    with subtest("expired previews are pruned"):
+        id, _ = deploy("demo", "preview", "3" * 40, "expiring.zip", branch="stale")
+        slot = wait_status(id)["url"].removeprefix("https://").split("-")[0]
+        meta = f"/var/www/muelle/demo/{slot}/meta.json"
+        machine.succeed("systemctl list-timers | grep muelle-prune")
+        machine.succeed("systemctl start muelle-prune.service")
+        machine.succeed(f"test -f {meta}")
+        machine.succeed(f"sed -i 's/\"deployed_at\": \"[^\"]*\"/\"deployed_at\": \"2000-01-01T00:00:00Z\"/' {meta}")
+        machine.succeed("systemctl start muelle-prune.service")
+        machine.fail(f"test -e /var/www/muelle/demo/{slot}")
+        page = machine.succeed(f"curl -skf {RESOLVE} -H 'X-Gate: open' https://muelle.test/index.json")
+        assert "stale" not in page, page
+
     with subtest("dotdot paths are rejected"):
         machine.succeed("cd /tmp && rm -rf dd && mkdir -p dd/a && echo x > dd/x && cd dd/a && tar -czPf /srv/artifacts/repos/owner/demo/dd.tgz ../x")
         digest = machine.succeed("sha256sum /srv/artifacts/repos/owner/demo/dd.tgz | cut -d' ' -f1").strip()

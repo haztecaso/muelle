@@ -54,6 +54,10 @@ With `redirectFrom = [ "example.com" ]`, `next.example.com` and
 
 `envs = [ "prod" ]` disables next and previews for a site.
 
+Previews are removed when a site has more than `keepPreviews` (10), and
+daily by `muelle-prune.timer` once their last deploy is older than
+`previewTtlDays` (30, per site `sites.<name>.previewTtlDays`; null disables).
+
 ## Security model
 
 - HMAC-SHA256 over the raw body, per-site secret. A secret only works on its
