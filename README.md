@@ -66,7 +66,7 @@ With `redirectFrom = [ "example.com" ]`, `next.example.com` and
 
 ```nix
 {
-  inputs.muelle.url = "github:<you>/muelle";
+  inputs.muelle.url = "github:haztecaso/muelle";
   # in your nixosConfiguration modules: inputs.muelle.nixosModules.default
 }
 ```
@@ -155,7 +155,7 @@ jobs:
       actions: read
       contents: read
       deployments: write
-    uses: <you>/muelle/.github/workflows/deploy.yml@main
+    uses: haztecaso/muelle/.github/workflows/deploy.yml@main
     with:
       endpoint: https://muelle.example.com
       site: mysite
@@ -171,7 +171,7 @@ jobs:
       actions: read
       contents: read
       deployments: write
-    uses: <you>/muelle/.github/workflows/deploy.yml@main
+    uses: haztecaso/muelle/.github/workflows/deploy.yml@main
     with:
       endpoint: https://muelle.example.com
       site: mysite
