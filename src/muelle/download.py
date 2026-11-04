@@ -54,8 +54,5 @@ def download(url: str, dest: Path, *, token: str, max_bytes: int, retries: int =
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as f:
-        while chunk := f.read(CHUNK):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(f, "sha256").hexdigest()
