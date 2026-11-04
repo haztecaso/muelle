@@ -94,7 +94,12 @@ def deploy(config: Config, job: Job, state: StateDir, fetch: Downloader = downlo
 
         state.write_status(job.id, "in_progress", "extracting", url)
         root = tmp / "root"
-        extract(artifact, root)
+        extract(
+            artifact,
+            root,
+            max_bytes=config.max_extracted_bytes,
+            max_files=config.max_artifact_files,
+        )
 
         if release.exists():
             shutil.rmtree(release)

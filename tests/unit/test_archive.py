@@ -105,3 +105,49 @@ def test_unknown_format(tmp_path: Path) -> None:
     archive = write(tmp_path, b"junk\n")
     with pytest.raises(ArchiveError, match="unknown artifact format"):
         extract(archive, tmp_path / "root")
+
+
+def test_zip_bomb_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "artifact"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("index.html", b"\0" * (2 << 20))
+    assert path.stat().st_size < 64 << 10
+    with pytest.raises(ArchiveError, match="expands to"):
+        extract(path, tmp_path / "root", max_bytes=1 << 20)
+    assert not any((tmp_path / "root").iterdir())
+
+
+def test_tar_gz_bomb_is_rejected(tmp_path: Path) -> None:
+    archive = write(tmp_path, make_tar([("index.html", "\0" * (2 << 20))]))
+    assert archive.stat().st_size < 64 << 10
+    with pytest.raises(ArchiveError, match="expands to"):
+        extract(archive, tmp_path / "root", max_bytes=1 << 20)
+    assert not any((tmp_path / "root").iterdir())
+
+
+def test_size_at_limit_is_accepted(tmp_path: Path) -> None:
+    archive = write(tmp_path, make_zip({"a": "x" * 10, "b": "y" * 10}, top=""))
+    extract(archive, tmp_path / "root", max_bytes=20)
+    assert (tmp_path / "root" / "b").read_text() == "y" * 10
+
+
+@pytest.mark.parametrize("make", [make_zip, lambda files: make_tar(list(files.items()))])
+def test_too_many_files_is_rejected(tmp_path: Path, make) -> None:
+    archive = write(tmp_path, make({f"{i}.html": "" for i in range(11)}))
+    with pytest.raises(ArchiveError, match="entries"):
+        extract(archive, tmp_path / "root", max_files=10)
+
+
+def test_lying_zip_size_is_bounded(tmp_path: Path) -> None:
+    """A zip member that decompresses past its declared size fails instead of filling the disk."""
+    path = tmp_path / "artifact"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("index.html", b"\0" * (2 << 20))
+    data = bytearray(path.read_bytes())
+    real = (2 << 20).to_bytes(4, "little")
+    fake = (10).to_bytes(4, "little")
+    assert data.count(real) == 2  # local header and central directory
+    path.write_bytes(bytes(data).replace(real, fake))
+    with pytest.raises(zipfile.BadZipFile):
+        extract(path, tmp_path / "root", max_bytes=1 << 20)
+    assert (tmp_path / "root" / "index.html").stat().st_size <= 10
