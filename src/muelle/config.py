@@ -29,6 +29,8 @@ class Config:
     keep_releases: int
     keep_previews: int
     max_artifact_bytes: int
+    max_extracted_bytes: int
+    max_artifact_files: int
     sites: dict[str, Site]
 
     @classmethod
