@@ -180,6 +180,20 @@
         code = machine.succeed(f"curl -sk {RESOLVE} -o /dev/null -w '%{{http_code}}' https://muelle.test/index.json")
         assert code == "401", code
 
+    with subtest("security headers"):
+        def headers(url, extra=""):
+            return machine.succeed(f"curl -skI {RESOLVE} {extra} {url}").lower()
+        for url in ["https://demo.test/", "https://next-demo.muelle.test/", "https://next.demo.test/",
+                    "https://muelle.test/", f"https://muelle.test/status/{id}"]:
+            h = headers(url, "-H 'X-Gate: open'")
+            assert "strict-transport-security: max-age=31536000\r\n" in h, (url, h)
+            assert "x-content-type-options: nosniff" in h, (url, h)
+        for url in ["https://muelle.test/", f"https://muelle.test/status/{id}"]:
+            h = headers(url, "-H 'X-Gate: open'")
+            assert "content-security-policy: default-src 'none'" in h, (url, h)
+            assert "cache-control: no-store" in h, (url, h)
+        assert "content-security-policy" not in headers("https://demo.test/")
+
     with subtest("preview deploy and teardown"):
         id, resp = deploy("demo", "preview", SHA2, "d.zip", branch="feat/x")
         url = json.loads(resp)["url"]

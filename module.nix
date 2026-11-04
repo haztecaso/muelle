@@ -92,6 +92,12 @@ let
           defaultText = lib.literalExpression "config.services.muelle.previewTtlDays";
           description = "Days after its last deploy a preview of this site is removed. Null keeps previews until pruned by count.";
         };
+        securityHeaders = mkOption {
+          type = types.lines;
+          default = cfg.securityHeaders;
+          defaultText = lib.literalExpression "config.services.muelle.securityHeaders";
+          description = "`add_header` directives of this site's prod, next/preview and redirect vhosts.";
+        };
         previewVhost = mkOption {
           type = types.attrs;
           default = cfg.previewVhostDefaults;
@@ -179,11 +185,19 @@ let
         extraConfig = ''
           add_header X-Robots-Tag "noindex, nofollow" always;
           try_files $uri $uri.html $uri/ =404;
-        '';
+        ''
+        + s.securityHeaders;
       }
       s.previewVhost
     ])
   ) (lib.filterAttrs (_: s: lib.any (e: e != "prod") s.envs) cfg.sites);
+
+  # the listing has no scripts and only an inline stylesheet
+  listingHeaders = ''
+    add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" always;
+    add_header Referrer-Policy "no-referrer" always;
+  ''
+  + cfg.securityHeaders;
 
   prodSites = lib.filterAttrs (_: s: s.domain != null) cfg.sites;
 
@@ -200,6 +214,7 @@ let
         };
         try_files $uri $uri.html $uri/ =404;
       ''
+      + s.securityHeaders
       + s.extraConfig;
     }
   ) prodSites;
@@ -215,6 +230,7 @@ let
             useACMEHost = apex;
             forceSSL = true;
             locations."/".return = "302 https://$muelle_slot-${name}.${cfg.domain}$request_uri";
+            extraConfig = s.securityHeaders;
           }
         ) s.redirectFrom
       ) cfg.sites
@@ -314,6 +330,20 @@ in
       default = null;
       example = "withHost";
       description = "nginx `log_format` name for prod vhost access logs (must be defined elsewhere). Null uses nginx's default.";
+    };
+    securityHeaders = mkOption {
+      type = types.lines;
+      default = ''
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Content-Type-Options "nosniff" always;
+      '';
+      description = ''
+        nginx `add_header` directives sent by every vhost muelle declares. HSTS
+        leaves out `includeSubDomains` and `preload`: the apex may not be yours.
+        Set to `""` to manage the headers yourself, or per site through
+        `sites.<name>.securityHeaders`. nginx drops server-level `add_header`
+        directives in a location that sets its own: repeat them there.
+      '';
     };
     previewVhostDefaults = mkOption {
       type = types.attrs;
@@ -463,7 +493,8 @@ in
             extraConfig = ''
               add_header X-Robots-Tag "noindex, nofollow" always;
               add_header Cache-Control "no-store" always;
-            '';
+            ''
+            + listingHeaders;
             locations."/hooks/" = {
               proxyPass = "http://127.0.0.1:${toString cfg.port}";
               extraConfig = ''
@@ -476,7 +507,8 @@ in
               extraConfig = ''
                 default_type application/json;
                 add_header Cache-Control "no-store" always;
-              '';
+              ''
+              + listingHeaders;
             };
           }
           cfg.indexVhost
