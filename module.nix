@@ -112,6 +112,8 @@ let
     keep_releases = cfg.keepReleases;
     keep_previews = cfg.keepPreviews;
     max_artifact_bytes = cfg.maxArtifactBytes;
+    max_extracted_bytes = cfg.maxExtractedBytes;
+    max_artifact_files = cfg.maxArtifactFiles;
     sites = lib.mapAttrs (name: s: {
       inherit (s) envs repo;
       prod_url = s.prodUrl;
@@ -271,6 +273,16 @@ in
       type = types.ints.positive;
       default = 200 * 1024 * 1024;
       description = "Maximum artifact download size.";
+    };
+    maxExtractedBytes = mkOption {
+      type = types.ints.positive;
+      default = 1024 * 1024 * 1024;
+      description = "Maximum total uncompressed size of an artifact (guards against zip bombs).";
+    };
+    maxArtifactFiles = mkOption {
+      type = types.ints.positive;
+      default = 50000;
+      description = "Maximum number of entries (files and directories) in an artifact.";
     };
     artifactUrlBase = mkOption {
       type = types.str;

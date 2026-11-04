@@ -159,6 +159,8 @@ def test_main_reports_errors_on_stderr(
                 "keep_releases": 2,
                 "keep_previews": 2,
                 "max_artifact_bytes": 1,
+                "max_extracted_bytes": 1,
+                "max_artifact_files": 1,
                 "sites": {},
             }
         )

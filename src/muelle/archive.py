@@ -5,6 +5,9 @@ import tarfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
+DEFAULT_MAX_BYTES = 1 << 30
+DEFAULT_MAX_FILES = 50_000
+
 
 class ArchiveError(Exception):
     pass
@@ -24,9 +27,24 @@ def _non_regular() -> ArchiveError:
     return ArchiveError("archive contains non-regular files (symlinks, devices, ...)")
 
 
-def _extract_zip(archive: Path, dest: Path) -> None:
+def _check_limits(sizes: list[int], max_bytes: int, max_files: int) -> None:
+    """Rejects archives that would expand beyond the limits (zip bombs, huge trees).
+
+    Declared sizes bound the extraction: tar sizes are exact, and zipfile stops
+    at a member's declared size (raising on CRC mismatch) whatever the data says.
+    """
+    if len(sizes) > max_files:
+        raise ArchiveError(f"archive has {len(sizes)} entries (limit {max_files})")
+    total = sum(sizes)
+    if total > max_bytes:
+        raise ArchiveError(f"archive expands to {total} bytes (limit {max_bytes})")
+
+
+def _extract_zip(archive: Path, dest: Path, max_bytes: int, max_files: int) -> None:
     with zipfile.ZipFile(archive) as z:
-        for info in z.infolist():
+        infos = z.infolist()
+        _check_limits([i.file_size for i in infos], max_bytes, max_files)
+        for info in infos:
             check_name(info.filename)
             # no file type bits: archivers that store no unix type (regular file or dir by name)
             file_type = stat.S_IFMT(info.external_attr >> 16)
@@ -35,9 +53,10 @@ def _extract_zip(archive: Path, dest: Path) -> None:
         z.extractall(dest)  # noqa: S202 members checked above
 
 
-def _extract_tar(archive: Path, dest: Path) -> None:
+def _extract_tar(archive: Path, dest: Path, max_bytes: int, max_files: int) -> None:
     with tarfile.open(archive, "r:*") as t:
         members = t.getmembers()
+        _check_limits([m.size for m in members], max_bytes, max_files)
         for m in members:
             check_name(m.name)
             if not (m.isfile() or m.isdir()):
@@ -76,13 +95,22 @@ def _unwrap_single_dir(dest: Path) -> None:
     unwrapped.rename(dest)
 
 
-def extract(archive: Path, dest: Path) -> None:
-    """Extracts ARCHIVE into DEST (created), rejecting anything but plain files and dirs."""
+def extract(
+    archive: Path,
+    dest: Path,
+    *,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    max_files: int = DEFAULT_MAX_FILES,
+) -> None:
+    """Extracts ARCHIVE into DEST (created), rejecting anything but plain files and dirs.
+
+    MAX_BYTES bounds the total uncompressed size, MAX_FILES the number of entries.
+    """
     dest.mkdir(parents=True)
     if zipfile.is_zipfile(archive):
-        _extract_zip(archive, dest)
+        _extract_zip(archive, dest, max_bytes, max_files)
     elif tarfile.is_tarfile(archive):
-        _extract_tar(archive, dest)
+        _extract_tar(archive, dest, max_bytes, max_files)
     else:
         raise ArchiveError("unknown artifact format (expected zip or tar)")
     _check_tree(dest)

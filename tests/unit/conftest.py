@@ -19,6 +19,8 @@ def config(tmp_path: Path) -> Config:
             "keep_releases": 2,
             "keep_previews": 2,
             "max_artifact_bytes": 1 << 20,
+            "max_extracted_bytes": 1 << 20,
+            "max_artifact_files": 100,
             "sites": {
                 "demo": {
                     "repo": "owner/demo",
