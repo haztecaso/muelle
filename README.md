@@ -73,6 +73,8 @@ daily by `muelle-prune.timer` once their last deploy is older than
 - The receiver runs as the unprivileged `muelle` user under systemd
   `ProtectSystem=strict`, writable paths limited to `baseDir` and `stateDir`.
 - `/hooks/` is rate limited in nginx.
+- `/status/<id>` is public (CI polls it), so unexpected errors show only
+  `internal error`; the detail and traceback stay in `<stateDir>/log/<id>.log`.
 - Static content needs no nginx reload: the symlink flip is atomic.
 
 ## Host setup

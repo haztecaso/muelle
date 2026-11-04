@@ -201,3 +201,30 @@ def test_download_failure_is_reported(config: Config, artifacts: FakeArtifacts) 
 def test_missing_spool_is_reported(config: Config) -> None:
     assert worker.run(config, "test-missing") == 1
     assert status(config, "test-missing")["state"] == "failure"
+
+
+def test_unexpected_error_is_not_exposed(
+    config: Config, artifacts: FakeArtifacts, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def boom(*_args: object, **_kw: object) -> None:
+        raise OSError(f"cannot write {config.base_dir}/secret")
+
+    payload = protocol.deploy_payload(
+        id="",
+        site="demo",
+        env="next",
+        branch="main",
+        sha=SHA1,
+        sha256="0" * 64,
+        artifact_url="https://api.github.com/repos/owner/demo/x",
+        token="",
+        ts=0,
+    )
+    id = spool(config, payload)
+    assert worker.run(config, id, fetch=boom) == 1
+    result = status(config, id)
+    assert result["message"] == f"failed: internal error (see host log {id})"
+    assert result["url"] == "https://next-demo.muelle.test"
+    out = capsys.readouterr().out
+    assert f"failed: OSError: cannot write {config.base_dir}/secret" in out
+    assert "Traceback" in out
