@@ -38,16 +38,19 @@ set GitHub Deployment state
 
 | env       | URL                                       |
 |-----------|-------------------------------------------|
-| `prod`    | `https://<domain>` (vhost declared by muelle), or your own vhost rooted at `services.muelle.sites.<name>.root` |
-| `next`    | `https://next-<site>.<previewDomain>`     |
-| `preview` | `https://<hash>-<site>.<previewDomain>` (new URL per commit) |
+| `prod`    | `https://<sites.<name>.domain>` (vhost declared by muelle), or your own vhost rooted at `services.muelle.sites.<name>.root` |
+| `next`    | `https://next-<site>.<domain>`            |
+| `preview` | `https://<hash>-<site>.<domain>` (new URL per commit) |
 
-`https://<previewDomain>/` lists every deployed next and preview environment
-(also as `index.json`). It reveals branch names and URLs, so gate it with
-`indexVhost` (defaults to `previewVhostDefaults`).
+`domain` is the single host muelle answers on: `/hooks/<site>` and
+`/status/<id>` for CI, and `/`, which lists every deployed next and preview
+environment (also as `index.json`). The listing reveals branch names and URLs,
+so gate it with `indexVhost` (defaults to `previewVhostDefaults`). Gate
+`location /` only: `/hooks/` and `/status/` are separate locations and must
+stay reachable from CI.
 
 With `redirectFrom = [ "example.com" ]`, `next.example.com` and
-`<hash>.example.com` 302 to the preview domain.
+`<hash>.example.com` 302 to `<slot>-<site>.<domain>`.
 
 `envs = [ "prod" ]` disables next and previews for a site.
 
@@ -80,9 +83,8 @@ With `redirectFrom = [ "example.com" ]`, `next.example.com` and
 {
   services.muelle = {
     enable = true;
-    domain = "muelle.example.com";
-    previewDomain = "p.example.com";
-    acmeHost = "example.com";          # cert covering muelle.example.com and *.p.example.com
+    domain = "muelle.example.com";     # hooks, status, listing; previews at *.muelle.example.com
+    acmeHost = "example.com";          # cert covering muelle.example.com and *.muelle.example.com
     previewVhostDefaults = { };        # e.g. { enableAuth = true; } for your own auth gate
     sites.mysite = {
       repo = "octocat/mysite";

@@ -14,7 +14,7 @@ cfg() {
 
 STATE_DIR=$(cfg .stateDir)
 BASE_DIR=$(cfg .baseDir)
-PREVIEW_DOMAIN=$(cfg .previewDomain)
+DOMAIN=$(cfg .domain)
 
 # get FIELD from a JSON document held in a variable
 jget() {
@@ -57,6 +57,6 @@ url_for() {
   if [[ $2 == prod ]]; then
     jq -r --arg s "$1" '.sites[$s].prodUrl' "$MUELLE_CONFIG"
   else
-    printf 'https://%s-%s.%s' "$2" "$1" "$PREVIEW_DOMAIN"
+    printf 'https://%s-%s.%s' "$2" "$1" "$DOMAIN"
   fi
 }

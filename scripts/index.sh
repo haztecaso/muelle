@@ -1,6 +1,6 @@
 # muelle-index
 # Regenerates the listing of deployed next/preview environments served at the
-# preview domain: <stateDir>/index/{index.json,index.html}.
+# muelle domain: <stateDir>/index/{index.json,index.html}.
 
 out="$STATE_DIR/index"
 mkdir -p "$out"
