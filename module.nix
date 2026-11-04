@@ -86,6 +86,12 @@ let
             `<slot>-<site>.<domain>`. Each apex needs an ACME cert of the same name covering `*.<apex>`.
           '';
         };
+        previewTtlDays = mkOption {
+          type = types.nullOr types.ints.positive;
+          default = cfg.previewTtlDays;
+          defaultText = lib.literalExpression "config.services.muelle.previewTtlDays";
+          description = "Days after its last deploy a preview of this site is removed. Null keeps previews until pruned by count.";
+        };
         previewVhost = mkOption {
           type = types.attrs;
           default = cfg.previewVhostDefaults;
@@ -115,6 +121,7 @@ let
     sites = lib.mapAttrs (name: s: {
       inherit (s) envs repo;
       prod_url = s.prodUrl;
+      preview_ttl_days = s.previewTtlDays;
       artifact_url_prefix = "${cfg.artifactUrlBase}/${s.repo}/";
     }) cfg.sites;
   };
@@ -267,6 +274,14 @@ in
       default = 10;
       description = "Preview slots kept per site (oldest removed first).";
     };
+    previewTtlDays = mkOption {
+      type = types.nullOr types.ints.positive;
+      default = 30;
+      description = ''
+        Days after its last deploy a preview is removed (daily, by `muelle-prune.timer`).
+        Null disables expiry. Overridable per site.
+      '';
+    };
     maxArtifactBytes = mkOption {
       type = types.ints.positive;
       default = 200 * 1024 * 1024;
@@ -387,6 +402,38 @@ in
       # Default KillMode (control-group) on purpose: the unit's main process is
       # a wrapper script, so KillMode=process would leave the old daemon
       # holding the port. In-flight workers die with it and report failure.
+    };
+
+    systemd.services.muelle-prune = {
+      description = "Remove expired muelle previews";
+      environment.MUELLE_CONFIG = "${configFile}";
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${muelle}/bin/muelle-prune";
+        User = "muelle";
+        Group = "muelle";
+        UMask = "0022";
+        NoNewPrivileges = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ProtectKernelTunables = true;
+        ProtectControlGroups = true;
+        RestrictSUIDSGID = true;
+        ReadWritePaths = [
+          cfg.baseDir
+          cfg.stateDir
+        ];
+      };
+    };
+    systemd.timers.muelle-prune = {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = "daily";
+        Persistent = true;
+        RandomizedDelaySec = "1h";
+      };
     };
 
     services.nginx.appendHttpConfig = ''

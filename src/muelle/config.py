@@ -17,6 +17,7 @@ class Site:
     prod_url: str
     envs: tuple[str, ...]
     artifact_url_prefix: str
+    preview_ttl_days: int | None = None
 
 
 @dataclass(frozen=True)
