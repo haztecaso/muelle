@@ -76,6 +76,33 @@ daily by `muelle-prune.timer` once their last deploy is older than
 - `/status/<id>` is public (CI polls it), so unexpected errors show only
   `internal error`; the detail and traceback stay in `<stateDir>/log/<id>.log`.
 - Static content needs no nginx reload: the symlink flip is atomic.
+- Every vhost muelle declares sends `securityHeaders`: HSTS (without
+  `includeSubDomains` or `preload`, since the apex may not be yours) and
+  `X-Content-Type-Options: nosniff`. Override them globally or per site
+  (`sites.<name>.securityHeaders`), not through `extraConfig`, which would
+  send them twice. The listing and `/status/` add a strict
+  `Content-Security-Policy` and `Referrer-Policy: no-referrer`; a CSP for
+  prod, next and previews is the site's business. nginx drops server-level
+  `add_header`s in any location that sets its own, so repeat them there.
+
+### Preview isolation
+
+next and every preview serve content from any branch, and they all live
+under `*.<domain>`: same-site with each other, with `/status/` and with the
+listing. Treat their content as untrusted:
+
+- A preview's JavaScript can set cookies for `<domain>` (cookie tossing), e.g.
+  to interfere with an auth gate's session.
+- If that gate scopes its cookie to `.<domain>` (single sign-on across
+  previews), every preview makes credentialed same-site requests to every
+  other preview and to the listing.
+
+So gate next and previews (`previewVhostDefaults`), and use host-only cookies
+for the gate (no `Domain` attribute), so each preview signs in on its own. If
+you deploy branches from people you do not trust, serve `domain` from its
+own registrable domain (one that hosts nothing else, like GitHub Pages and
+Netlify do with their public-suffix domains), so previews cannot reach
+cookies or same-site requests of your other hosts.
 
 ## Host setup
 
