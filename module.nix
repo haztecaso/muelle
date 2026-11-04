@@ -276,7 +276,7 @@ in
     };
     maxExtractedBytes = mkOption {
       type = types.ints.positive;
-      default = 1024 * 1024 * 1024;
+      default = 2 * 1024 * 1024 * 1024;
       description = "Maximum total uncompressed size of an artifact (guards against zip bombs).";
     };
     maxArtifactFiles = mkOption {

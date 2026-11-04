@@ -5,7 +5,7 @@ import tarfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-DEFAULT_MAX_BYTES = 1 << 30
+DEFAULT_MAX_BYTES = 2 << 30
 DEFAULT_MAX_FILES = 50_000
 
 
