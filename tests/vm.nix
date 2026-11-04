@@ -256,6 +256,16 @@
                 "MUELLE_ARTIFACT_URL": "http://127.0.0.1:8080/repos/owner/demo/junk.zip",
                 "MUELLE_SHA256": "0" * 64}, check=False)
 
+    with subtest("service restarts cleanly and keeps serving"):
+        machine.succeed("systemctl restart webhook.service")
+        machine.wait_for_unit("webhook.service")
+        machine.wait_for_open_port(9077)
+        assert machine.succeed("pgrep -c -x webhook").strip() == "1"
+        machine.succeed("! journalctl -u webhook | grep -q ghs_dummy")
+        id, _ = deploy("demo", "next", SHA1, "after-restart.zip")
+        wait_status(id)
+        machine.succeed(f"curl -sk {RESOLVE} https://next-demo.p.test/ | grep next-1111111")
+
     with subtest("dotdot paths are rejected"):
         machine.succeed("cd /tmp && rm -rf dd && mkdir -p dd/a && echo x > dd/x && cd dd/a && tar -czPf /srv/artifacts/repos/owner/demo/dd.tgz ../x")
         digest = machine.succeed("sha256sum /srv/artifacts/repos/owner/demo/dd.tgz | cut -d' ' -f1").strip()

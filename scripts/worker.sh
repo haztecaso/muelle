@@ -24,6 +24,8 @@ on_exit() {
   fi
 }
 trap on_exit EXIT
+# killed (e.g. service restart): exit so on_exit records the failure
+trap 'exit 143' TERM INT
 
 exec 9>"$STATE_DIR/locks/$site.lock"
 flock 9
