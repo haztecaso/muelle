@@ -45,7 +45,8 @@ set GitHub Deployment state
 `domain` is the single host muelle answers on: `/hooks/<site>` and
 `/status/<id>` for CI, and `/`, which lists every deployed next and preview
 environment (also as `index.json`). The listing reveals branch names and URLs,
-so gate it with `indexVhost` (defaults to `previewVhostDefaults`). Gate
+so gate it, with `previewVhost` (which also gates next and previews) or
+`indexVhost` (this vhost only). Gate
 `location /` only: `/hooks/` and `/status/` are separate locations and must
 stay reachable from CI.
 
@@ -102,7 +103,7 @@ listing. Treat their content as untrusted:
   previews), every preview makes credentialed same-site requests to every
   other preview and to the listing.
 
-So gate next and previews (`previewVhostDefaults`), and use host-only cookies
+So gate next and previews (`previewVhost`), and use host-only cookies
 for the gate (no `Domain` attribute), so each preview signs in on its own. If
 you deploy branches from people you do not trust, serve `domain` from its
 own registrable domain (one that hosts nothing else, like GitHub Pages and
@@ -125,7 +126,7 @@ cookies or same-site requests of your other hosts.
     enable = true;
     domain = "muelle.example.com";     # hooks, status, listing; previews at *.muelle.example.com
     acmeHost = "example.com";          # cert covering muelle.example.com and *.muelle.example.com
-    previewVhostDefaults = { };        # e.g. { enableAuth = true; } for your own auth gate
+    previewVhost = { };                # e.g. { enableAuth = true; } for your own auth gate
     sites.mysite = {
       repo = "octocat/mysite";
       secretFile = config.age.secrets."muelle-mysite".path;
@@ -341,13 +342,17 @@ uv run pytest               # unit tests (tests/unit)
 uv run ruff check && uv run ruff format --check
 uv run ty check
 nix build .#muelle          # package, runs the unit tests with nixpkgs' python
-nix flake check             # also the NixOS VM test of the full flow
+nix flake check             # also module eval tests, config parity and the NixOS VM test
 ```
+
+The NixOS module is in `nix/modules`: `core/` (site table, config JSON, admin
+CLI, systemd units), `nginx/` (the `domain` vhost and what every vhost
+shares) and `static/` (prod, preview and redirect vhosts of static sites).
 
 `main` is protected: changes land through pull requests once the two `ci`
 jobs pass: `lint` (actionlint, SHA pins, nixfmt, flake evaluation, ruff, ty) and `check`
 (pytest, a smoke test of the composite action, and `nix flake check` with the
-package and the NixOS VM test on a KVM-enabled runner). Every third-party
+package, module eval tests and the NixOS VM test on a KVM-enabled runner). Every third-party
 action, including `actions/setup-python` inside the composite action, is
 pinned by commit SHA (`lint` rejects tag references); Dependabot bumps the
 SHAs and their version comments, and
