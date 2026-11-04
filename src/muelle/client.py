@@ -42,14 +42,14 @@ class ClientError(Exception):
 class GitHub:
     """Context of the GitHub Actions run, empty outside of it."""
 
-    api_url: str = "https://api.github.com"
-    server_url: str = "https://github.com"
-    repository: str = ""
-    run_id: str = ""
-    run_attempt: str = "1"
-    token: str = ""
-    output: str = ""
-    step_summary: str = ""
+    api_url: str
+    server_url: str
+    repository: str
+    run_id: str
+    run_attempt: str
+    token: str
+    output: str
+    step_summary: str
 
     @property
     def run_url(self) -> str:

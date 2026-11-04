@@ -12,7 +12,6 @@ import re
 import sys
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 from . import protocol
@@ -22,17 +21,6 @@ from .state import StateDir
 
 class Rejected(Exception):
     pass
-
-
-@dataclass(frozen=True)
-class Request:
-    id: str
-    site: str
-    action: str
-    env: str
-    branch: str
-    sha: str
-    url: str
 
 
 _ID = re.compile(r"[A-Za-z0-9-]{8,96}")
@@ -56,8 +44,9 @@ def _check(pattern: re.Pattern[str], value: str, message: str) -> None:
         raise Rejected(message)
 
 
-def validate(payload: object, hook_site: str, config: Config, now: int) -> Request:
-    """Checks a payload against the site table; raises Rejected with a reason."""
+def validate(payload: object, hook_site: str, config: Config, now: int) -> str:
+    """Checks a payload against the site table; returns the URL it deploys to ("" for a
+    teardown) or raises Rejected with a reason."""
     if not isinstance(payload, dict):
         raise Rejected("payload is not a JSON object")
 
@@ -65,7 +54,6 @@ def validate(payload: object, hook_site: str, config: Config, now: int) -> Reque
     if protocol_version != str(protocol.PROTOCOL):
         raise Rejected(f"unsupported protocol '{protocol_version}' (this host speaks {protocol.PROTOCOL})")
 
-    id = field(payload, "id")
     site = field(payload, "site")
     action = field(payload, "action")
     env = field(payload, "env")
@@ -73,7 +61,7 @@ def validate(payload: object, hook_site: str, config: Config, now: int) -> Reque
     sha = field(payload, "sha")
     ts = field(payload, "ts")
 
-    _check(_ID, id, "invalid id")
+    _check(_ID, field(payload, "id"), "invalid id")
     if site != hook_site:
         raise Rejected("site does not match hook")
     if site not in config.sites:
@@ -99,15 +87,12 @@ def validate(payload: object, hook_site: str, config: Config, now: int) -> Reque
         _check(_ARTIFACT_URL, artifact_url, "invalid artifact_url")
         if ".." in artifact_url:
             raise Rejected("invalid artifact_url")
-        url = config.url_for(site, protocol.slot_for(site, env, branch, sha))
-    elif action == "teardown":
+        return config.slot_url(site, env, branch, sha)
+    if action == "teardown":
         if env != "preview":
             raise Rejected("teardown only applies to previews")
-        url = ""
-    else:
-        raise Rejected("invalid action")
-
-    return Request(id=id, site=site, action=action, env=env, branch=branch, sha=sha, url=url)
+        return ""
+    raise Rejected("invalid action")
 
 
 def spool(state: StateDir, id: str, raw: str) -> None:
@@ -133,7 +118,7 @@ def detach_worker(config: Config, id: str) -> None:
     code = 1
     try:
         os.setsid()
-        log = os.open(StateDir(config.state_dir).log_path(id), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o640)
+        log = os.open(config.state.log_path(id), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o640)
         devnull = os.open(os.devnull, os.O_RDONLY)
         os.dup2(devnull, 0)
         os.dup2(log, 1)
@@ -158,17 +143,12 @@ def handle(
         payload = json.loads(raw)
     except json.JSONDecodeError:
         raise Rejected("payload is not a JSON object") from None
-    request = validate(payload, hook_site, config, now)
-    state = StateDir(config.state_dir)
-    spool(state, request.id, raw)
-    state.write_status(request.id, "queued", "queued", request.url)
-    spawn(config, request.id)
-    return {
-        "id": request.id,
-        "state": "queued",
-        "url": request.url,
-        "status_url": config.status_url(request.id),
-    }
+    url = validate(payload, hook_site, config, now)
+    id = field(payload, "id")
+    spool(config.state, id, raw)
+    config.state.write_status(id, "queued", "queued", url)
+    spawn(config, id)
+    return {"id": id, "state": "queued", "url": url, "status_url": config.status_url(id)}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -184,9 +164,5 @@ def main(argv: list[str] | None = None) -> int:
     except Rejected as e:
         print(f"muelle: {e}", file=sys.stderr)
         return 1
-    print(json.dumps(response, separators=(",", ":")))
+    print(protocol.encode(response).decode())
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

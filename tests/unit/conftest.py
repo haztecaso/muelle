@@ -13,24 +13,24 @@ def config(tmp_path: Path) -> Config:
     return Config.from_json(
         {
             "domain": "muelle.test",
-            "baseDir": str(tmp_path / "www"),
-            "stateDir": str(state),
-            "maxSkew": 300,
-            "keepReleases": 2,
-            "keepPreviews": 2,
-            "maxArtifactBytes": 1 << 20,
+            "base_dir": str(tmp_path / "www"),
+            "state_dir": str(state),
+            "max_skew": 300,
+            "keep_releases": 2,
+            "keep_previews": 2,
+            "max_artifact_bytes": 1 << 20,
             "sites": {
                 "demo": {
                     "repo": "owner/demo",
-                    "prodUrl": "https://demo.test",
+                    "prod_url": "https://demo.test",
                     "envs": ["prod", "next", "preview"],
-                    "artifactUrlPrefix": "https://api.github.com/repos/owner/demo/",
+                    "artifact_url_prefix": "https://api.github.com/repos/owner/demo/",
                 },
                 "prodonly": {
                     "repo": "owner/prodonly",
-                    "prodUrl": "https://prodonly.test",
+                    "prod_url": "https://prodonly.test",
                     "envs": ["prod"],
-                    "artifactUrlPrefix": "https://api.github.com/repos/owner/prodonly/",
+                    "artifact_url_prefix": "https://api.github.com/repos/owner/prodonly/",
                 },
             },
         }

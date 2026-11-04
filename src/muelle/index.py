@@ -5,15 +5,15 @@ muelle domain: <stateDir>/index/{index.json,index.html}.
 """
 
 import json
-import sys
 from html import escape
 from itertools import groupby
 from pathlib import Path
 from string.templatelib import Interpolation, Template
-from typing import TypedDict
+from typing import Any, TypedDict
 
+from . import protocol
 from .config import Config
-from .state import StateDir, utc_now, write_atomic, write_json_atomic
+from .state import utc_now, write_atomic, write_json_atomic
 
 
 class Entry(TypedDict):
@@ -28,8 +28,11 @@ class Entry(TypedDict):
     prod: str
 
 
-def _is_listed_slot(name: str) -> bool:
-    return name == "next" or (len(name) == 8 and all(c in "0123456789abcdef" for c in name))
+def read_meta(slot_dir: Path) -> dict[str, Any]:
+    try:
+        return json.loads((slot_dir / "meta.json").read_text())
+    except OSError, ValueError:
+        return {}
 
 
 def collect(config: Config) -> list[Entry]:
@@ -40,10 +43,11 @@ def collect(config: Config) -> list[Entry]:
         if not site_dir.is_dir():
             continue
         for slot_dir in site_dir.iterdir():
-            meta_path = slot_dir / "meta.json"
-            if not (_is_listed_slot(slot_dir.name) and (slot_dir / "current").is_symlink() and meta_path.is_file()):
+            slot = slot_dir.name
+            if not (slot == "next" or protocol.is_preview_slot(slot)) or not (slot_dir / "current").is_symlink():
                 continue
-            meta = json.loads(meta_path.read_text())
+            if not (meta := read_meta(slot_dir)):
+                continue
             entries.append(
                 Entry(
                     site=meta["site"],
@@ -51,8 +55,8 @@ def collect(config: Config) -> list[Entry]:
                     branch=meta["branch"],
                     sha=meta["sha"],
                     deployed_at=meta["deployed_at"],
-                    slot=slot_dir.name,
-                    url=config.url_for(site_name, slot_dir.name),
+                    slot=slot,
+                    url=config.url_for(site_name, slot),
                     repo=site.repo,
                     prod=site.prod_url,
                 )
@@ -151,17 +155,13 @@ def render(entries: list[Entry], generated: str) -> str:
 def write(config: Config) -> None:
     out: Path = config.state_dir / "index"
     out.mkdir(parents=True, exist_ok=True)
-    with StateDir(config.state_dir).lock("index"):
+    with config.state.lock("index"):
         entries = collect(config)
         generated = utc_now()
         write_json_atomic(out / "index.json", {"generated": generated, "entries": entries})
         write_atomic(out / "index.html", render(entries, generated))
 
 
-def main(argv: list[str] | None = None) -> int:
+def main() -> int:
     write(Config.load())
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

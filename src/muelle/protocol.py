@@ -6,6 +6,7 @@ The client imports this module too, so it must stay stdlib-only.
 import hashlib
 import hmac
 import json
+import re
 from typing import Any, Literal
 
 # Bumped together with the action's major version on breaking payload changes.
@@ -34,6 +35,10 @@ def slot_for(site: str, env: str, branch: str, sha: str) -> str:
     if env in ("prod", "next"):
         return env
     return hashlib.sha256(f"{site}\n{branch}\n{sha}".encode()).hexdigest()[:8]
+
+
+def is_preview_slot(name: str) -> bool:
+    return re.fullmatch(r"[0-9a-f]{8}", name) is not None
 
 
 def deploy_payload(

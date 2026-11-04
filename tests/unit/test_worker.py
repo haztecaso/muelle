@@ -10,7 +10,6 @@ from helpers import make_tar, make_zip, sha256
 from muelle import protocol, worker
 from muelle.config import Config
 from muelle.download import DownloadError
-from muelle.worker import surplus
 
 SHA1 = "1" * 40
 SHA2 = "2" * 40
@@ -76,11 +75,16 @@ def run_deploy(
     return id, result
 
 
-def test_surplus_keeps_newest_and_protected() -> None:
-    entries = [(1.0, "a"), (3.0, "c"), (2.0, "b"), (0.5, "z")]
-    assert surplus(entries, 2) == ["a", "z"]
-    assert surplus(entries, 2, protect="a") == ["z"]
-    assert surplus(entries, 10) == []
+def test_prune_keeps_newest_and_protected(tmp_path: Path) -> None:
+    dirs = []
+    for name, mtime in (("a", 1), ("c", 3), ("b", 2), ("z", 0.5)):
+        (tmp_path / name).mkdir()
+        os.utime(tmp_path / name, (mtime, mtime))
+        dirs.append(tmp_path / name)
+    worker.prune(dirs, 10, worker._mtime)
+    assert len(list(tmp_path.iterdir())) == 4
+    worker.prune(dirs, 2, worker._mtime, protect="a")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a", "b", "c"]
 
 
 def test_prod_deploy(config: Config, artifacts: FakeArtifacts) -> None:
@@ -125,7 +129,7 @@ def test_previews_are_pruned(config: Config, artifacts: FakeArtifacts) -> None:
         slots.append(slot)
         os.utime(site / slot / "meta.json", (1000 + i, 1000 + i))
     run_deploy(config, artifacts, "next", SHA1, make_zip({"index.html": "n"}))
-    remaining = sorted(p.name for p in site.iterdir() if worker.is_preview_slot(p.name))
+    remaining = sorted(p.name for p in site.iterdir() if protocol.is_preview_slot(p.name))
     # keepPreviews = 2; the prune after the third preview removed the first
     assert remaining == sorted(slots[1:])
 
@@ -136,7 +140,7 @@ def test_teardown_removes_branch_previews(config: Config, artifacts: FakeArtifac
     id = spool(config, protocol.teardown_payload(id="", site="demo", branch="feat/x", ts=0))
     assert worker.run(config, id, fetch=artifacts) == 0
     assert status(config, id)["message"] == "teardown of feat/x done"
-    remaining = [p.name for p in (config.base_dir / "demo").iterdir() if worker.is_preview_slot(p.name)]
+    remaining = [p.name for p in (config.base_dir / "demo").iterdir() if protocol.is_preview_slot(p.name)]
     assert remaining == [protocol.slot_for("demo", "preview", "feat/y", SHA2)]
     index = json.loads((config.state_dir / "index" / "index.json").read_text())
     assert [e["branch"] for e in index["entries"]] == ["feat/y"]

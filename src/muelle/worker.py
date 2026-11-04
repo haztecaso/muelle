@@ -10,7 +10,7 @@ import signal
 import sys
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +19,6 @@ from .archive import ArchiveError, extract
 from .config import Config
 from .download import DownloadError, download, sha256_file
 from .state import StateDir, utc_now, write_json_atomic
-
-PREVIEW_SLOT_LEN = 8
 
 type Downloader = Callable[..., None]
 
@@ -47,28 +45,11 @@ class Job:
 
     @classmethod
     def from_payload(cls, id: str, payload: dict[str, Any]) -> Job:
-        def get(key: str) -> str:
-            return str(payload.get(key) or "")
-
-        return cls(
-            id=id,
-            site=get("site"),
-            action=get("action"),
-            env=get("env"),
-            branch=get("branch"),
-            sha=get("sha"),
-            sha256=get("sha256"),
-            artifact_url=get("artifact_url"),
-            token=get("token"),
-        )
+        return cls(**{f.name: str(payload.get(f.name) or "") for f in fields(cls)} | {"id": id})
 
 
 def log(message: str) -> None:
     print(message, flush=True)
-
-
-def is_preview_slot(name: str) -> bool:
-    return len(name) == PREVIEW_SLOT_LEN and all(c in "0123456789abcdef" for c in name)
 
 
 def _subdirs(directory: Path) -> list[Path]:
@@ -77,47 +58,27 @@ def _subdirs(directory: Path) -> list[Path]:
     return [p for p in directory.iterdir() if p.is_dir() and not p.is_symlink() and not p.name.startswith(".")]
 
 
-def surplus(entries: list[tuple[float, str]], keep: int, protect: str = "") -> list[str]:
-    """Names beyond the newest KEEP (by timestamp), never including PROTECT."""
-    ranked = sorted(entries, key=lambda e: e[0], reverse=True)
-    return [name for _, name in ranked[keep:] if name != protect]
+def prune(dirs: list[Path], keep: int, key: Callable[[Path], float], protect: str = "") -> None:
+    """Removes DIRS beyond the newest KEEP (ranked by KEY), never PROTECT."""
+    for path in sorted(dirs, key=key, reverse=True)[keep:]:
+        if path.name != protect:
+            log(f"pruning {path}")
+            shutil.rmtree(path)
 
 
-def prune_releases(releases: Path, keep: int, protect: str) -> None:
-    entries = [(p.stat().st_mtime, p.name) for p in _subdirs(releases)]
-    for name in surplus(entries, keep, protect):
-        log(f"pruning {releases}/{name}")
-        shutil.rmtree(releases / name)
+def _mtime(path: Path) -> float:
+    return path.stat().st_mtime if path.exists() else 0
 
 
 def preview_slots(site_dir: Path) -> list[Path]:
-    return [p for p in _subdirs(site_dir) if is_preview_slot(p.name)]
-
-
-def prune_previews(site_dir: Path, keep: int) -> None:
-    def deployed(slot: Path) -> float:
-        meta = slot / "meta.json"
-        return meta.stat().st_mtime if meta.exists() else 0
-
-    entries = [(deployed(p), p.name) for p in preview_slots(site_dir)]
-    for name in surplus(entries, keep):
-        log(f"pruning preview {name}")
-        shutil.rmtree(site_dir / name)
-
-
-def read_meta(slot_dir: Path) -> dict[str, Any]:
-    try:
-        return json.loads((slot_dir / "meta.json").read_text())
-    except OSError, ValueError:
-        return {}
+    return [p for p in _subdirs(site_dir) if protocol.is_preview_slot(p.name)]
 
 
 def deploy(config: Config, job: Job, state: StateDir, fetch: Downloader = download) -> str:
     """Installs the artifact as the slot's current release; returns the slot URL."""
     site_dir = config.base_dir / job.site
-    slot = protocol.slot_for(job.site, job.env, job.branch, job.sha)
-    url = config.url_for(job.site, slot)
-    slot_dir = site_dir / slot
+    slot_dir = site_dir / protocol.slot_for(job.site, job.env, job.branch, job.sha)
+    url = config.slot_url(job.site, job.env, job.branch, job.sha)
     releases = slot_dir / "releases"
     release = releases / job.sha
 
@@ -149,9 +110,9 @@ def deploy(config: Config, job: Job, state: StateDir, fetch: Downloader = downlo
         {"site": job.site, "env": job.env, "branch": job.branch, "sha": job.sha, "deployed_at": utc_now()},
     )
 
-    prune_releases(releases, config.keep_releases, job.sha)
+    prune(_subdirs(releases), config.keep_releases, _mtime, protect=job.sha)
     if job.env == "preview":
-        prune_previews(site_dir, config.keep_previews)
+        prune(preview_slots(site_dir), config.keep_previews, lambda slot: _mtime(slot / "meta.json"))
     log(f"deployed {url}")
     return url
 
@@ -160,7 +121,7 @@ def teardown(config: Config, job: Job) -> int:
     """Removes every preview of the job's branch; returns how many."""
     removed = 0
     for slot in preview_slots(config.base_dir / job.site):
-        if read_meta(slot).get("branch") == job.branch:
+        if index.read_meta(slot).get("branch") == job.branch:
             log(f"removing preview {slot.name}")
             shutil.rmtree(slot)
             removed += 1
@@ -169,21 +130,21 @@ def teardown(config: Config, job: Job) -> int:
 
 
 def process(config: Config, job: Job, fetch: Downloader = download) -> None:
-    state = StateDir(config.state_dir)
+    state = config.state
     (config.base_dir / job.site).mkdir(parents=True, exist_ok=True)
     with state.lock(job.site):
         log(f"[{utc_now()}] {job.action} site={job.site} env={job.env} branch={job.branch} sha={job.sha}")
         match job.action:
             case "deploy":
                 url = deploy(config, job, state, fetch)
-                index.write(config)
-                state.write_status(job.id, "success", f"deployed {job.sha}", url)
+                message = f"deployed {job.sha}"
             case "teardown":
                 teardown(config, job)
-                index.write(config)
-                state.write_status(job.id, "success", f"teardown of {job.branch} done")
+                url, message = "", f"teardown of {job.branch} done"
             case action:
                 raise DeployError(f"invalid action '{action}'")
+        index.write(config)
+        state.write_status(job.id, "success", message, url)
 
 
 def _raise_terminated(signum: int, _frame: object) -> None:
@@ -199,7 +160,7 @@ def run(config: Config, id: str, fetch: Downloader = download) -> int:
 
 def process_spooled(config: Config, id: str, fetch: Downloader = download) -> int:
     """Processes spooled job ID, recording any failure in its status file."""
-    state = StateDir(config.state_dir)
+    state = config.state
     url = ""
     try:
         spool = state.spool_path(id)
@@ -207,7 +168,7 @@ def process_spooled(config: Config, id: str, fetch: Downloader = download) -> in
         spool.unlink()
         job = Job.from_payload(id, payload)
         if job.action == "deploy":
-            url = config.url_for(job.site, protocol.slot_for(job.site, job.env, job.branch, job.sha))
+            url = config.slot_url(job.site, job.env, job.branch, job.sha)
         process(config, job, fetch)
         return 0
     except (DeployError, DownloadError, ArchiveError, Terminated) as e:
@@ -225,7 +186,3 @@ def main(argv: list[str] | None = None) -> int:
         print("usage: muelle-worker ID", file=sys.stderr)
         return 2
     return run(Config.load(), args[0])
-
-
-if __name__ == "__main__":
-    sys.exit(main())

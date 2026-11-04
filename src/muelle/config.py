@@ -3,7 +3,12 @@
 import json
 import os
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
+from typing import Any
+
+from . import protocol
+from .state import StateDir
 
 
 @dataclass(frozen=True)
@@ -26,38 +31,33 @@ class Config:
     sites: dict[str, Site]
 
     @classmethod
-    def from_json(cls, data: dict) -> Config:
-        return cls(
-            domain=data["domain"],
-            base_dir=Path(data["baseDir"]),
-            state_dir=Path(data["stateDir"]),
-            max_skew=int(data["maxSkew"]),
-            keep_releases=int(data["keepReleases"]),
-            keep_previews=int(data["keepPreviews"]),
-            max_artifact_bytes=int(data["maxArtifactBytes"]),
-            sites={
-                name: Site(
-                    repo=s["repo"],
-                    prod_url=s["prodUrl"],
-                    envs=tuple(s["envs"]),
-                    artifact_url_prefix=s["artifactUrlPrefix"],
-                )
-                for name, s in data["sites"].items()
-            },
-        )
+    def from_json(cls, data: dict[str, Any]) -> Config:
+        sites = {name: Site(**s | {"envs": tuple(s["envs"])}) for name, s in data["sites"].items()}
+        typed: dict[str, Any] = {
+            "base_dir": Path(data["base_dir"]),
+            "state_dir": Path(data["state_dir"]),
+            "sites": sites,
+        }
+        return cls(**data | typed)
 
     @classmethod
-    def load(cls, path: str | Path | None = None) -> Config:
-        if path is None:
-            path = os.environ.get("MUELLE_CONFIG")
-            if not path:
-                raise SystemExit("muelle: MUELLE_CONFIG not set")
+    def load(cls) -> Config:
+        path = os.environ.get("MUELLE_CONFIG")
+        if not path:
+            raise SystemExit("muelle: MUELLE_CONFIG not set")
         return cls.from_json(json.loads(Path(path).read_text()))
+
+    @cached_property
+    def state(self) -> StateDir:
+        return StateDir(self.state_dir)
 
     def url_for(self, site: str, slot: str) -> str:
         if slot == "prod":
             return self.sites[site].prod_url
         return f"https://{slot}-{site}.{self.domain}"
+
+    def slot_url(self, site: str, env: str, branch: str, sha: str) -> str:
+        return self.url_for(site, protocol.slot_for(site, env, branch, sha))
 
     def status_url(self, id: str) -> str:
         return f"https://{self.domain}/status/{id}"

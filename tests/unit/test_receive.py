@@ -42,19 +42,17 @@ def test_field_reads_like_jq_tostring() -> None:
 
 
 def test_valid_deploy(config: Config) -> None:
-    request = validate(deploy(), "demo", config, NOW)
-    assert request.action == "deploy"
-    assert request.url == "https://next-demo.muelle.test"
+    assert validate(deploy(), "demo", config, NOW) == "https://next-demo.muelle.test"
 
 
 def test_prod_deploy_reports_prod_url(config: Config) -> None:
-    assert validate(deploy(env="prod"), "demo", config, NOW).url == "https://demo.test"
+    assert validate(deploy(env="prod"), "demo", config, NOW) == "https://demo.test"
 
 
 def test_preview_url_uses_slot(config: Config) -> None:
-    request = validate(deploy(env="preview", branch="feat/x"), "demo", config, NOW)
+    url = validate(deploy(env="preview", branch="feat/x"), "demo", config, NOW)
     slot = protocol.slot_for("demo", "preview", "feat/x", SHA)
-    assert request.url == f"https://{slot}-demo.muelle.test"
+    assert url == f"https://{slot}-demo.muelle.test"
 
 
 def test_missing_protocol_means_1(config: Config) -> None:
@@ -65,9 +63,7 @@ def test_missing_protocol_means_1(config: Config) -> None:
 
 def test_valid_teardown(config: Config) -> None:
     payload = protocol.teardown_payload(id="test-0002", site="demo", branch="feat/x", ts=NOW)
-    request = validate(payload, "demo", config, NOW)
-    assert request.action == "teardown"
-    assert request.url == ""
+    assert validate(payload, "demo", config, NOW) == ""
 
 
 @pytest.mark.parametrize(
@@ -157,12 +153,12 @@ def test_main_reports_errors_on_stderr(
         json.dumps(
             {
                 "domain": config.domain,
-                "baseDir": str(config.base_dir),
-                "stateDir": str(config.state_dir),
-                "maxSkew": 300,
-                "keepReleases": 2,
-                "keepPreviews": 2,
-                "maxArtifactBytes": 1,
+                "base_dir": str(config.base_dir),
+                "state_dir": str(config.state_dir),
+                "max_skew": 300,
+                "keep_releases": 2,
+                "keep_previews": 2,
+                "max_artifact_bytes": 1,
                 "sites": {},
             }
         )
