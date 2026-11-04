@@ -78,6 +78,9 @@ def validate(payload: object, hook_site: str, config: Config, now: int) -> str:
             raise Rejected("invalid env")
         if env not in config.sites[site].envs:
             raise Rejected(f"env '{env}' not allowed for site '{site}'")
+        prod_branches = config.sites[site].prod_branches
+        if env == "prod" and prod_branches is not None and branch not in prod_branches:
+            raise Rejected(f"branch '{branch}' may not deploy to prod (allowed: {', '.join(prod_branches)})")
         _check(_SHA, sha, "invalid sha")
         _check(_SHA256, field(payload, "sha256"), "invalid sha256")
         artifact_url = field(payload, "artifact_url")

@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from typing import Any
 
@@ -101,6 +102,40 @@ def test_env_not_allowed_for_site(config: Config) -> None:
         artifact_url="https://api.github.com/repos/owner/prodonly/x",
     )
     assert rejected(payload, config, site="prodonly") == "env 'preview' not allowed for site 'prodonly'"
+
+
+def with_prod_branches(config: Config, branches: tuple[str, ...] | None) -> Config:
+    demo = dataclasses.replace(config.sites["demo"], prod_branches=branches)
+    return dataclasses.replace(config, sites=config.sites | {"demo": demo})
+
+
+def test_prod_defaults_to_main(config: Config) -> None:
+    assert rejected(deploy(env="prod", branch="feat/x"), config) == (
+        "branch 'feat/x' may not deploy to prod (allowed: main)"
+    )
+    # other envs are not restricted
+    validate(deploy(env="next", branch="feat/x"), "demo", config, NOW)
+
+
+def test_prod_branches(config: Config) -> None:
+    config = with_prod_branches(config, ("main", "release"))
+    validate(deploy(env="prod", branch="release"), "demo", config, NOW)
+    assert "may not deploy to prod" in rejected(deploy(env="prod", branch="releases"), config)
+
+
+def test_prod_branches_null_allows_any(config: Config) -> None:
+    validate(deploy(env="prod", branch="feat/x"), "demo", with_prod_branches(config, None), NOW)
+
+
+def test_prod_branches_from_json(config: Config) -> None:
+    data = {"repo": "o/r", "prod_url": "u", "envs": ["prod"], "artifact_url_prefix": "p"}
+    assert Config.from_json(_raw(config, data | {"prod_branches": ["a"]})).sites["x"].prod_branches == ("a",)
+    assert Config.from_json(_raw(config, data | {"prod_branches": None})).sites["x"].prod_branches is None
+
+
+def _raw(config: Config, site: dict[str, Any]) -> dict[str, Any]:
+    fields = {f.name: getattr(config, f.name) for f in dataclasses.fields(config)}
+    return fields | {"base_dir": str(config.base_dir), "state_dir": str(config.state_dir), "sites": {"x": site}}
 
 
 def test_unknown_site(config: Config) -> None:
