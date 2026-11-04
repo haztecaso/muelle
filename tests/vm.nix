@@ -24,6 +24,7 @@
       environment.etc."muelle-demo".text = "deadbeef";
       environment.etc."muelle-prodonly".text = "cafebabe";
       environment.systemPackages = with pkgs; [
+        (callPackage ../scripts { })
         jq
         openssl
         zip
@@ -86,7 +87,7 @@
     machine.wait_for_open_port(9077)
 
     RESOLVE = " ".join(f"--resolve {h}:443:127.0.0.1" for h in
-      ["muelle.p.test", "demo.test", "next.demo.test", "next-demo.p.test", "prod-demo.p.test"])
+      ["muelle.p.test", "p.test", "demo.test", "next.demo.test", "next-demo.p.test", "prod-demo.p.test"])
     counter = [0]
 
     def make_artifact(name, content, kind="zip"):
@@ -158,6 +159,9 @@
         assert loc == "https://next-demo.p.test/x", loc
         # prod is never served on the preview domain
         machine.fail(f"curl -skf {RESOLVE} https://prod-demo.p.test/")
+        idx = json.loads(machine.succeed(f"curl -skf {RESOLVE} https://p.test/index.json"))
+        assert [(e["site"], e["env"], e["url"]) for e in idx["entries"]] == [("demo", "next", "https://next-demo.p.test")], idx
+        machine.succeed(f"curl -skf {RESOLVE} https://p.test/ | grep -F 'href=\"https://next-demo.p.test\"'")
 
     with subtest("preview deploy and teardown"):
         id, resp = deploy("demo", "preview", SHA2, "d.zip", branch="feat/x")
@@ -165,9 +169,13 @@
         host = url.removeprefix("https://")
         wait_status(id)
         machine.succeed(f"curl -sk --resolve {host}:443:127.0.0.1 {url}/ | grep preview-2222222")
+        page = machine.succeed(f"curl -skf {RESOLVE} https://p.test/")
+        assert url in page and "feat/x" in page, page
         id, _ = post("demo", {"action": "teardown", "env": "preview", "branch": "feat/x"}, "deadbeef")
         wait_status(id)
         machine.succeed(f"curl -sk --resolve {host}:443:127.0.0.1 -o /dev/null -w '%{{http_code}}' {url}/ | grep 404")
+        page = machine.succeed(f"curl -skf {RESOLVE} https://p.test/")
+        assert url not in page and "next-demo.p.test" in page, page
 
     # webhook answers an HMAC mismatch with 500 "Error occurred while evaluating hook rules."
     with subtest("bad signature is rejected"):
@@ -189,6 +197,10 @@
         assert "stale" in r, r
         _, r = post("demo", {"site": "prodonly", "action": "deploy", "env": "prod"}, "deadbeef", expect_code=500)
         assert "site does not match" in r, r
+
+    with subtest("unknown protocol is rejected"):
+        _, r = post("demo", {"protocol": 2, "action": "deploy", "env": "prod"}, "deadbeef", expect_code=500)
+        assert "unsupported protocol" in r, r
 
     with subtest("replayed id is rejected"):
         id, _ = deploy("demo", "next", SHA2, "e.zip")
@@ -213,6 +225,36 @@
         s = wait_status(id, "failure")
         assert "non-regular" in s["message"], s
         machine.succeed(f"curl -sk {RESOLVE} https://next-demo.p.test/ | grep next-2222222")
+
+    def client(extra, check=True):
+        env = {
+            "MUELLE_ENDPOINT": "https://muelle.p.test", "MUELLE_SITE": "demo",
+            "MUELLE_SECRET": "deadbeef", "MUELLE_DEPLOYMENTS": "false",
+            "MUELLE_CURL_OPTS": "-k --resolve muelle.p.test:443:127.0.0.1",
+            "MUELLE_POLL_INTERVAL": "1", "MUELLE_TIMEOUT": "60",
+            "GITHUB_OUTPUT": "/tmp/gh-output", "GITHUB_RUN_ID": "99",
+        } | extra
+        cmd = "rm -f /tmp/gh-output; " + " ".join(f"{k}='{v}'" for k, v in env.items()) + " muelle-client"
+        return machine.succeed(cmd) if check else machine.fail(cmd)
+
+    with subtest("client deploys a preview and tears it down"):
+        path, digest = make_artifact("client.zip", "client-preview")
+        out = client({"MUELLE_ENV": "preview", "MUELLE_BRANCH": "feat/client", "MUELLE_SHA": "3" * 40,
+                      "MUELLE_ARTIFACT_URL": "http://127.0.0.1:8080/repos/owner/demo/client.zip",
+                      "MUELLE_SHA256": f"sha256:{digest}", "MUELLE_TOKEN": "ghs_dummy"})
+        assert "muelle: success" in out, out
+        url = machine.succeed("sed -n 's/^url=//p' /tmp/gh-output").strip()
+        assert url.endswith("-demo.p.test"), url
+        host = url.removeprefix("https://")
+        machine.succeed(f"curl -sk --resolve {host}:443:127.0.0.1 {url}/ | grep client-preview")
+        client({"MUELLE_ACTION": "teardown", "MUELLE_BRANCH": "feat/client"})
+        machine.succeed(f"curl -sk --resolve {host}:443:127.0.0.1 -o /dev/null -w '%{{http_code}}' {url}/ | grep 404")
+
+    with subtest("client fails on rejection and on failed deploys"):
+        client({"MUELLE_SECRET": "wrong", "MUELLE_ACTION": "teardown", "MUELLE_BRANCH": "x"}, check=False)
+        client({"MUELLE_ENV": "next", "MUELLE_BRANCH": "main", "MUELLE_SHA": "4" * 40,
+                "MUELLE_ARTIFACT_URL": "http://127.0.0.1:8080/repos/owner/demo/junk.zip",
+                "MUELLE_SHA256": "0" * 64}, check=False)
 
     with subtest("dotdot paths are rejected"):
         machine.succeed("cd /tmp && rm -rf dd && mkdir -p dd/a && echo x > dd/x && cd dd/a && tar -czPf /srv/artifacts/repos/owner/demo/dd.tgz ../x")

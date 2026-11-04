@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # flake-update.yml dispatches this: PRs opened with GITHUB_TOKEN trigger nothing else
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: actionlint
+        run: nix run nixpkgs#actionlint
+      - name: nixfmt
+        run: git ls-files -z '*.nix' | xargs -0 nix run nixpkgs#nixfmt -- --check
+
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # enable_kvm (default true) makes /dev/kvm usable for the NixOS VM test
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: system-features = nixos-test benchmark big-parallel kvm
+      - name: nix flake check
+        run: nix flake check -L

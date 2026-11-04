@@ -2,8 +2,8 @@
 
 Pull-based CI/CD for static sites on a NixOS host.
 
-GitHub Actions builds the site and uploads it as a workflow artifact. A
-reusable workflow sends an HMAC-signed request to the host; the host fetches
+GitHub Actions builds the site and uploads it as a workflow artifact. The
+muelle composite action sends an HMAC-signed request to the host; the host fetches
 the artifact, verifies it and flips a symlink. CI never gets shell access and
 never applies NixOS configuration: the NixOS module is the only authority on
 which sites, environments and paths exist.
@@ -41,6 +41,10 @@ set GitHub Deployment state
 | `prod`    | your own vhost, rooted at `services.muelle.sites.<name>.root` |
 | `next`    | `https://next-<site>.<previewDomain>`     |
 | `preview` | `https://<hash>-<site>.<previewDomain>` (new URL per commit) |
+
+`https://<previewDomain>/` lists every deployed next and preview environment
+(also as `index.json`). It reveals branch names and URLs, so gate it with
+`indexVhost` (defaults to `previewVhostDefaults`).
 
 With `redirectFrom = [ "example.com" ]`, `next.example.com` and
 `<hash>.example.com` 302 to the preview domain.
@@ -123,7 +127,12 @@ sudo -u muelle ln -sfn releases/initial "$base/current"
 Content that is not produced by the site build (archives, uploads) disappears
 on the next deploy; serve it from a separate path.
 
-## Workflow
+## GitHub Action
+
+muelle is a composite action: add it as a step after `actions/upload-artifact`.
+Its logic lives in [`scripts/client.sh`](scripts/client.sh), which the NixOS VM
+test runs against a real host, and which also works outside GitHub Actions
+(configured through `MUELLE_*` environment variables).
 
 ```yaml
 name: deploy
@@ -133,12 +142,13 @@ on:
   delete:
 
 jobs:
-  build:
+  deploy:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    outputs:
-      artifact-id: ${{ steps.upload.outputs.artifact-id }}
-      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+    permissions:
+      actions: read        # lets the host download the artifact with this job's token
+      contents: read
+      deployments: write   # GitHub Deployment status (disable with `deployments: false`)
     steps:
       - uses: actions/checkout@v4
       - run: make build   # produces ./dist
@@ -148,37 +158,68 @@ jobs:
           name: site
           path: dist
           retention-days: 1
-
-  deploy:
-    needs: build
-    permissions:
-      actions: read
-      contents: read
-      deployments: write
-    uses: haztecaso/muelle/.github/workflows/deploy.yml@main
-    with:
-      endpoint: https://muelle.example.com
-      site: mysite
-      environment: ${{ github.ref_name == 'main' && 'prod' || github.ref_name == 'next' && 'next' || 'preview' }}
-      artifact-id: ${{ needs.build.outputs.artifact-id }}
-      artifact-digest: ${{ needs.build.outputs.artifact-digest }}
-    secrets:
-      muelle-secret: ${{ secrets.MUELLE_SECRET }}
+      - uses: haztecaso/muelle@<sha> # v1.0.0
+        with:
+          endpoint: https://muelle.example.com
+          site: mysite
+          secret: ${{ secrets.MUELLE_SECRET }}
+          environment: ${{ github.ref_name == 'main' && 'prod' || github.ref_name == 'next' && 'next' || 'preview' }}
+          artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
 
   teardown:
     if: github.event_name == 'delete' && github.event.ref_type == 'branch'
+    runs-on: ubuntu-latest
     permissions:
-      actions: read
-      contents: read
       deployments: write
-    uses: haztecaso/muelle/.github/workflows/deploy.yml@main
-    with:
-      endpoint: https://muelle.example.com
-      site: mysite
-      action: teardown
-    secrets:
-      muelle-secret: ${{ secrets.MUELLE_SECRET }}
+    steps:
+      - uses: haztecaso/muelle@<sha> # v1.0.0
+        with:
+          endpoint: https://muelle.example.com
+          site: mysite
+          secret: ${{ secrets.MUELLE_SECRET }}
+          action: teardown
 ```
+
+Inputs: `endpoint`, `site`, `secret` (required); `action` (`deploy` |
+`teardown`), `environment` (`prod` | `next` | `preview`), `artifact-id`,
+`artifact-digest`, `branch` (defaults to the triggering or deleted branch),
+`timeout-seconds` (600), `github-token` (`github.token`), `deployments`
+(`true`). Output: `url`.
+
+The job's token stays valid while the action waits for the host, which is what
+lets the host download the artifact with it.
+
+### Versioning
+
+The action is released with semver tags (`v1.2.3`); pushing such a tag runs
+`release.yml`, which creates the GitHub release and moves the floating major
+tag (`v1`) to it. The major version changes only on breaking changes to the
+action inputs or to the payload; the payload carries `protocol` (currently
+`1`) and the host rejects protocols it does not speak, so a host and an action
+of different majors fail loudly instead of half-working.
+
+How to reference it, from most to least locked down:
+
+- `@<commit sha> # v1.2.3`: immutable. Recommended, because the action is
+  handed your `MUELLE_SECRET`. Let Dependabot bump the SHA and the comment
+  together:
+  ```yaml
+  # .github/dependabot.yml
+  version: 2
+  updates:
+    - package-ecosystem: github-actions
+      directory: /
+      schedule:
+        interval: weekly
+  ```
+  Resolve a tag to its commit with `git ls-remote https://github.com/haztecaso/muelle 'refs/tags/v1.2.3^{}'`
+  (the `^{}` matters: an annotated tag's own SHA does not work).
+- `@v1.2.3`: readable, but tags can be moved.
+- `@v1`: follows every compatible release automatically. Fine for repos you
+  own when you trust the muelle repo as much as the host.
+
+Never use `@main` outside of testing muelle itself.
 
 A zip artifact with a single top-level directory is unwrapped, so uploading
 `dist/` or its contents both work.
@@ -187,6 +228,7 @@ A zip artifact with a single top-level directory is unwrapped, so uploading
 
 ```json
 {
+  "protocol": 1,
   "id": "1234-1-mysite-1730000000",
   "site": "mysite",
   "action": "deploy",
@@ -215,6 +257,12 @@ mismatches as 500 too). `GET /status/<id>` returns
 nix build .#muelle          # scripts, shellchecked
 nix flake check             # includes a NixOS VM test of the full flow
 ```
+
+`main` is protected: changes land through pull requests once the `ci` checks
+(`lint`: actionlint + nixfmt; `check`: `nix flake check` with the VM test on a
+KVM-enabled runner) pass. Dependabot keeps action references current, and
+`flake-update.yml` opens a weekly `flake.lock` PR that merges itself when ci
+passes. To release, tag a commit on `main` with `vX.Y.Z` and push the tag.
 
 ## Not yet
 

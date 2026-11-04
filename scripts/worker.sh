@@ -171,10 +171,12 @@ mkdir -p "$site_dir"
 case $action in
 deploy)
   deploy
+  "$MUELLE_INDEX"
   write_status "$id" success "deployed $sha" "$url"
   ;;
 teardown)
   teardown
+  "$MUELLE_INDEX"
   write_status "$id" success "teardown of $branch done"
   ;;
 esac

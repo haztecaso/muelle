@@ -1,0 +1,45 @@
+# Weekly flake.lock update: opens (or refreshes) a PR and enables auto-merge,
+# so it lands once the required ci checks pass.
+name: flake-update
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      BRANCH: flake-update
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Update flake.lock
+        run: nix flake update
+      - name: Open PR with auto-merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet flake.lock; then
+            echo "flake.lock is up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git commit -am "flake.lock: update"
+          git push -f origin "$BRANCH"
+          if [[ -z $(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number') ]]; then
+            gh pr create --head "$BRANCH" --title "flake.lock: update" \
+              --body "Automated weekly \`nix flake update\`. Merges itself once ci passes."
+          fi
+          # pushes made with GITHUB_TOKEN do not trigger workflows; dispatch ci explicitly
+          gh workflow run ci.yml --ref "$BRANCH"
+          gh pr merge "$BRANCH" --auto --squash --delete-branch

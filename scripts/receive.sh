@@ -17,6 +17,11 @@ branch=$(jget "$payload" branch)
 sha=$(jget "$payload" sha)
 ts=$(jget "$payload" ts)
 
+# Bumped together with the workflow's major version on breaking payload changes.
+# Missing means a workflow from before the field existed (protocol 1).
+protocol=$(jget "$payload" protocol)
+[[ ${protocol:-1} == 1 ]] || die "unsupported protocol '$protocol' (this host speaks 1)"
+
 valid '^[A-Za-z0-9-]{8,96}$' "$id" || die "invalid id"
 [[ $site == "$hook_site" ]] || die "site does not match hook"
 jq -e --arg s "$site" '.sites | has($s)' "$MUELLE_CONFIG" >/dev/null || die "unknown site"
