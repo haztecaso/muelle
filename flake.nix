@@ -18,12 +18,17 @@
       packages = forAll (pkgs: rec {
         muelle = pkgs.callPackage ./package.nix { };
         default = muelle;
+        docs = import ./nix/docs.nix {
+          inherit (pkgs) lib;
+          inherit pkgs;
+          inherit (nixpkgs.lib) nixosSystem;
+        };
       });
 
       checks = forAll (
         pkgs:
         let
-          muelle = self.packages.${pkgs.stdenv.hostPlatform.system}.muelle;
+          inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) muelle docs;
           eval = import ./tests/eval.nix {
             inherit pkgs;
             inherit (nixpkgs.lib) nixosSystem;
@@ -32,6 +37,19 @@
         in
         {
           package = muelle;
+          inherit docs;
+          # internal links and anchors only: the sandbox has no network
+          docs-links =
+            pkgs.runCommand "muelle-docs-links"
+              {
+                nativeBuildInputs = [ pkgs.lychee ];
+                SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+              }
+              ''
+                # 404.html resolves links against site-url (/muelle/), as served on Pages
+                lychee --offline --include-fragments --no-progress --exclude-path 404.html --root-dir ${docs} ${docs}
+                touch $out
+              '';
           # fails at evaluation, so `nix flake check --no-build` runs it too
           eval =
             if eval.failures == [ ] then

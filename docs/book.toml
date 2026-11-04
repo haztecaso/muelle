@@ -1,0 +1,9 @@
+[book]
+title = "muelle"
+description = "Pull-based CI/CD for static sites on a NixOS host"
+authors = ["haztecaso"]
+language = "en"
+
+[output.html]
+site-url = "/muelle/"
+git-repository-url = "https://github.com/haztecaso/muelle"
