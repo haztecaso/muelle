@@ -22,9 +22,9 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: cachix/install-nix-action@v31
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
       - id: sync
@@ -32,6 +32,15 @@ jobs:
       - name: actionlint
         if: ${{ !cancelled() }}
         run: nix run nixpkgs#actionlint
+      - name: actions pinned by commit sha
+        if: ${{ !cancelled() }}
+        # tags can be moved; local actions (./) are exempt
+        run: |
+          if git grep -nE '^\s*(-\s+)?uses:\s+[^.[:space:]]' -- action.yml .github/workflows \
+              | grep -vE 'uses:\s+[^@[:space:]]+@[0-9a-f]{40}(\s|$)'; then
+            echo "::error::pin these actions by full commit sha (uses: owner/repo@<sha> # vX.Y.Z)"
+            exit 1
+          fi
       - name: nixfmt
         if: ${{ !cancelled() }}
         run: git ls-files -z '*.nix' | xargs -0 nix run nixpkgs#nixfmt -- --check
@@ -52,12 +61,12 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # enable_kvm (default true) makes /dev/kvm usable for the NixOS VM test
-      - uses: cachix/install-nix-action@v31
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
         with:
           extra_nix_config: system-features = nixos-test benchmark big-parallel kvm
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
       - id: sync
