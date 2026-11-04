@@ -85,6 +85,11 @@ def test_rm_refuses(config: Config, slot: str) -> None:
     assert host_statuses(config) == []
 
 
+def test_prune_no_record(config: Config) -> None:
+    assert run(config, "prune", "--no-record")[0] == 0
+    assert host_statuses(config) == []
+
+
 def test_prune_applies_keep_limits_but_keeps_current(config: Config) -> None:
     # keep_releases = 2 in the fixture; the current release is the oldest
     deployed(config, "demo", "prod", "prod", "main", "2026-01-01T00:00:00Z")
@@ -108,6 +113,11 @@ def test_jobs_and_log(config: Config) -> None:
     assert sorted(line.split()[2] for line in out.splitlines()) == sorted([status["id"], "old-job-0001"])
     _, out = run(config, "jobs", "-n", "1")
     assert len(out.splitlines()) == 1
+    _, out = run(config, "jobs", "demo")
+    [line] = out.splitlines()
+    assert line.split()[1:7] == ["success", status["id"], "demo", "teardown", "preview", "feat/x"]
+    _, out = run(config, "jobs", "prodonly")
+    assert out == ""
     _, log = run(config, "log", status["id"])
     assert "teardown of feat/x (host)" in log
     assert run(config, "log", "../../etc/passwd")[0] == 1

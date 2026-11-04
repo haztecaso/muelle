@@ -1,4 +1,4 @@
-"""muelle-prune (also `muelle prune`)
+"""Pruning (`muelle prune`)
 
 Removes preview slots whose last deploy is older than the site's preview TTL,
 then applies keepPreviews and keepReleases (never the release `current`
@@ -50,8 +50,3 @@ def prune(config: Config, now: datetime | None = None, sites: list[str] | None =
     index.write(config)
     log(f"removed {removed} expired preview(s)")
     return removed
-
-
-def main() -> int:
-    prune(Config.load())
-    return 0

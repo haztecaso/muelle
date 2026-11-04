@@ -188,13 +188,17 @@ muelle prune [<site>]            # apply previewTtlDays, keepPreviews, keepRelea
 muelle teardown <site> <branch>  # remove every preview of a branch
 muelle rm <site> <slot>          # remove next or one preview (never prod)
 muelle index                     # rebuild the listing
-muelle jobs [-n 20]              # recent jobs (hook requests and host actions)
+muelle jobs [<site>] [-n 20]     # recent jobs (hook requests and host actions)
 muelle log <id>                  # a job's log
 ```
 
 `prune`, `teardown` and `rm` are recorded like hook requests (a `host-...`
 job with status file and log) and refresh the listing. `muelle-prune.timer`
-runs the same pruning daily.
+runs the same pruning daily (`muelle prune --no-record`).
+
+Each job also has `<stateDir>/jobs/<id>.json` with its site, action, env and
+branch, which `muelle jobs` shows. It is not served: `/status/<id>` is public
+and only carries state, message and URL.
 
 ## GitHub Action
 

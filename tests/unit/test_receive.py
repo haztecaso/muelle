@@ -162,6 +162,15 @@ def test_handle_spools_and_queues(config: Config) -> None:
     assert spool.stat().st_mode & 0o777 == 0o600
     status = json.loads((config.state_dir / "status" / "test-0001.json").read_text())
     assert status["state"] == "queued"
+    assert "branch" not in status  # /status/ is public
+    job = config.state.read_job("test-0001")
+    assert {k: job[k] for k in ("site", "action", "env", "branch", "sha")} == {
+        "site": "demo",
+        "action": "deploy",
+        "env": "next",
+        "branch": "main",
+        "sha": SHA,
+    }
 
 
 def test_handle_rejects_replayed_id(config: Config) -> None:

@@ -1,13 +1,12 @@
-"""muelle-worker ID
+"""Deploy worker.
 
-Detached by muelle-receive. Reads the already-validated payload from the
+Forked by muelle-receive (receive.detach_worker). Reads the already-validated payload from the
 spool dir, deploys or tears down, and keeps the status file updated.
 """
 
 import json
 import shutil
 import signal
-import sys
 import tempfile
 import traceback
 from collections.abc import Callable
@@ -196,11 +195,3 @@ def process_spooled(config: Config, id: str, fetch: Downloader = download) -> in
         message = f"internal error (see host log {id})"
     state.write_status(id, "failure", f"failed: {message}", url)
     return 1
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = sys.argv[1:] if argv is None else argv
-    if len(args) != 1:
-        print("usage: muelle-worker ID", file=sys.stderr)
-        return 2
-    return run(Config.load(), args[0])

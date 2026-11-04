@@ -99,15 +99,21 @@ def releases(config: Config, site: str, slot: str, out: IO[str]) -> None:
     _table([["*" if r.name == current else " ", r.name, _when(r)] for r in rels], out)
 
 
-def jobs(config: Config, limit: int, out: IO[str]) -> None:
+JOB_COLUMNS = ("updated", "state", "id", "site", "action", "env", "branch", "message")
+
+
+def jobs(config: Config, limit: int, site: str | None, out: IO[str]) -> None:
     entries: list[dict[str, Any]] = []
     for path in (config.state_dir / "status").glob("*.json"):
         try:
-            entries.append(json.loads(path.read_text()))
+            status = json.loads(path.read_text())
         except OSError, ValueError:
             continue
+        entry = config.state.read_job(path.stem) | status
+        if site is None or entry.get("site") == site:
+            entries.append(entry)
     entries.sort(key=lambda e: str(e.get("updated", "")), reverse=True)
-    _table([[str(e.get(k, "")) for k in ("updated", "state", "id", "message")] for e in entries[:limit]], out)
+    _table([[str(e.get(k) or "-") for k in JOB_COLUMNS] for e in entries[:limit]], out)
 
 
 _ID = re.compile(r"[A-Za-z0-9-]+")
@@ -138,10 +144,11 @@ class _Tee:
 
 
 @contextmanager
-def host_job(config: Config, description: str, out: IO[str]) -> Generator[str]:
-    """Records a host action like a hook request: status file, log, then the listing."""
+def host_job(config: Config, description: str, out: IO[str], **job: str) -> Generator[str]:
+    """Records a host action like a hook request: job and status files, log, then the listing."""
     id = f"host-{int(time.time())}-{secrets.token_hex(4)}"
     state = config.state
+    state.write_job(id, **job)
     state.write_status(id, "in_progress", description)
     # same mode as the worker's logs
     fd = os.open(state.log_path(id), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o640)
@@ -158,7 +165,8 @@ def host_job(config: Config, description: str, out: IO[str]) -> Generator[str]:
 
 
 def teardown(config: Config, site: str, branch: str, out: IO[str]) -> None:
-    with host_job(config, f"teardown of {branch}", out), config.state.lock(site):
+    job = {"site": site, "action": "teardown", "env": "preview", "branch": branch}
+    with host_job(config, f"teardown of {branch}", out, **job), config.state.lock(site):
         worker.teardown(config, site, branch)
 
 
@@ -168,13 +176,14 @@ def rm(config: Config, site: str, slot: str, out: IO[str]) -> None:
     slot_dir = config.base_dir / site / slot
     if not slot_dir.is_dir():
         raise CliError(f"no slot '{slot}' for site '{site}'")
-    with host_job(config, f"rm {site}/{slot}", out), config.state.lock(site):
+    job = {"site": site, "action": "rm", "env": "next" if slot == "next" else "preview", "slot": slot}
+    with host_job(config, f"rm {site}/{slot}", out, **job), config.state.lock(site):
         worker.log(f"removing {slot_dir}")
         shutil.rmtree(slot_dir)
 
 
 def prune(config: Config, sites: list[str], out: IO[str]) -> None:
-    with host_job(config, f"prune {' '.join(sites)}", out):
+    with host_job(config, f"prune {' '.join(sites)}", out, site=",".join(sites), action="prune"):
         prune_mod.prune(config, sites=sites)
 
 
@@ -188,6 +197,7 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("slot", help="prod, next or a preview hash")
     s = sub.add_parser("prune", help="apply previewTtlDays, keepPreviews and keepReleases now")
     s.add_argument("site", nargs="?")
+    s.add_argument("--no-record", action="store_true", help="no host job (used by muelle-prune.timer)")
     s = sub.add_parser("teardown", help="remove every preview of a branch")
     s.add_argument("site")
     s.add_argument("branch")
@@ -196,6 +206,7 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("slot")
     sub.add_parser("index", help="rebuild the listing")
     s = sub.add_parser("jobs", help="recent jobs, newest first")
+    s.add_argument("site", nargs="?")
     s.add_argument("-n", type=int, default=20, help="how many (default 20)")
     s = sub.add_parser("log", help="log of a job")
     s.add_argument("id")
@@ -210,6 +221,8 @@ def run(argv: Sequence[str], config: Config, out: IO[str] = sys.stdout) -> int:
                 status(config, _sites(config, args.site), out)
             case "releases":
                 releases(config, _site(config, args.site), args.slot, out)
+            case "prune" if args.no_record:
+                prune_mod.prune(config, sites=_sites(config, args.site))
             case "prune":
                 prune(config, _sites(config, args.site), out)
             case "teardown":
@@ -219,7 +232,7 @@ def run(argv: Sequence[str], config: Config, out: IO[str] = sys.stdout) -> int:
             case "index":
                 index.write(config)
             case "jobs":
-                jobs(config, args.n, out)
+                jobs(config, args.n, args.site and _site(config, args.site), out)
             case "log":
                 show_log(config, args.id, out)
     except CliError as e:
