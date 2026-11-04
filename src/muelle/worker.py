@@ -9,6 +9,7 @@ import shutil
 import signal
 import sys
 import tempfile
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -172,10 +173,14 @@ def process_spooled(config: Config, id: str, fetch: Downloader = download) -> in
         process(config, job, fetch)
         return 0
     except (DeployError, DownloadError, ArchiveError, Terminated) as e:
+        # written for CI: safe to show on the public status endpoint
         message = str(e)
+        log(f"failed: {message}")
     except Exception as e:
-        message = f"{type(e).__name__}: {e}"
-    log(f"failed: {message}")
+        # may hold host paths or other internals: full detail in the log only
+        log(f"failed: {type(e).__name__}: {e}")
+        log(traceback.format_exc())
+        message = f"internal error (see host log {id})"
     state.write_status(id, "failure", f"failed: {message}", url)
     return 1
 
