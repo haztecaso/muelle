@@ -296,6 +296,8 @@ in
       user = "muelle";
       group = "muelle";
       ip = "127.0.0.1";
+      # verbose logs every request's environment, including the GitHub token
+      verbose = false;
       inherit (cfg) port;
       environment.MUELLE_CONFIG = "${configFile}";
       hooksTemplated = lib.mapAttrs hook cfg.sites;
@@ -319,8 +321,9 @@ in
         cfg.baseDir
         cfg.stateDir
       ];
-      # deploy workers are detached children: let them finish on restart
-      KillMode = "process";
+      # Default KillMode (control-group) on purpose: the unit's main process is
+      # a wrapper script, so KillMode=process would leave the old daemon
+      # holding the port. In-flight workers die with it and report failure.
     };
 
     services.nginx.appendHttpConfig = ''
