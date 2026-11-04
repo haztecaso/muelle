@@ -288,9 +288,12 @@ nix flake check             # also the NixOS VM test of the full flow
 ```
 
 `main` is protected: changes land through pull requests once the two `ci`
-jobs pass: `lint` (actionlint, nixfmt, flake evaluation, ruff, ty) and `check`
+jobs pass: `lint` (actionlint, SHA pins, nixfmt, flake evaluation, ruff, ty) and `check`
 (pytest, a smoke test of the composite action, and `nix flake check` with the
-package and the NixOS VM test on a KVM-enabled runner). Dependabot keeps action references current, and
+package and the NixOS VM test on a KVM-enabled runner). Every third-party
+action, including `actions/setup-python` inside the composite action, is
+pinned by commit SHA (`lint` rejects tag references); Dependabot bumps the
+SHAs and their version comments, and
 `flake-update.yml` opens a weekly `flake.lock` PR that merges itself when ci
 passes. To release, tag a commit on `main` with `vX.Y.Z` and push the tag.
 
