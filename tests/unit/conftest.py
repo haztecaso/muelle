@@ -8,7 +8,7 @@ from muelle.config import Config
 @pytest.fixture
 def config(tmp_path: Path) -> Config:
     state = tmp_path / "state"
-    for sub in ("status", "spool", "log", "locks", "index"):
+    for sub in ("status", "jobs", "spool", "log", "locks", "index"):
         (state / sub).mkdir(parents=True)
     return Config.from_json(
         {

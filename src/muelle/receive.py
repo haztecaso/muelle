@@ -149,6 +149,8 @@ def handle(
     url = validate(payload, hook_site, config, now)
     id = field(payload, "id")
     spool(config.state, id, raw)
+    job = {key: field(payload, key) for key in ("site", "action", "env", "branch", "sha")}
+    config.state.write_job(id, **job, url=url)
     config.state.write_status(id, "queued", "queued", url)
     spawn(config, id)
     return {"id": id, "state": "queued", "url": url, "status_url": config.status_url(id)}

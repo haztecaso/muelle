@@ -1,4 +1,4 @@
-"""Files under stateDir: status, spool, logs and locks."""
+"""Files under stateDir: status, jobs, spool, logs and locks."""
 
 import fcntl
 import json
@@ -47,6 +47,20 @@ class StateDir:
 
     def log_path(self, id: str) -> Path:
         return self.root / "log" / f"{id}.log"
+
+    def job_path(self, id: str) -> Path:
+        return self.root / "jobs" / f"{id}.json"
+
+    def write_job(self, id: str, **fields: str) -> None:
+        """Records what job ID is about (site, action, env, branch, ...). Kept apart from
+        the status file, which /status/ serves publicly: branch names stay off it."""
+        write_json_atomic(self.job_path(id), {"id": id, **fields, "created": utc_now()})
+
+    def read_job(self, id: str) -> dict[str, Any]:
+        try:
+            return json.loads(self.job_path(id).read_text())
+        except OSError, ValueError:
+            return {}
 
     def write_status(self, id: str, state: State, message: str, url: str = "") -> None:
         write_json_atomic(

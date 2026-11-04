@@ -163,7 +163,9 @@
         id, _ = deploy("demo", "prod", SHA2, "b.tar.gz", kind="tar")
         wait_status(id)
         machine.succeed(f"curl -sk {RESOLVE} https://demo.test/ | grep prod-2222222")
-        machine.succeed(f"test -d /var/www/muelle/demo/prod/releases/{SHA1}")
+        # the previous release is kept, current is the new one
+        machine.succeed(f"muelle releases demo prod | grep -E '^[*][[:space:]]+{SHA2}[[:space:]]'")
+        machine.succeed(f"muelle releases demo prod | grep -E '^[[:space:]]+{SHA1}[[:space:]]'")
 
     with subtest("next deploy and apex redirect"):
         id, _ = deploy("demo", "next", SHA1, "c.zip")
@@ -306,10 +308,12 @@
         meta = f"/var/www/muelle/demo/{slot}/meta.json"
         machine.succeed("systemctl list-timers | grep muelle-prune")
         machine.succeed("systemctl start muelle-prune.service")
-        machine.succeed(f"test -f {meta}")
+        machine.succeed(f"muelle status demo | grep -E '^[[:space:]]+{slot}[[:space:]]+stale'")
         machine.succeed(f"sed -i 's/\"deployed_at\": \"[^\"]*\"/\"deployed_at\": \"2000-01-01T00:00:00Z\"/' {meta}")
         machine.succeed("systemctl start muelle-prune.service")
-        machine.fail(f"test -e /var/www/muelle/demo/{slot}")
+        machine.succeed(f"! muelle status demo | grep -q {slot}")
+        # the timer's runs are not recorded as host jobs
+        machine.succeed("! muelle jobs | grep -q prune")
         page = machine.succeed(f"curl -skf {RESOLVE} -H 'X-Gate: open' https://muelle.test/index.json")
         assert "stale" not in page, page
 
@@ -331,12 +335,19 @@
         host = url.removeprefix("https://")
         machine.succeed("muelle teardown demo feat/cli | grep 'removed 1 preview'")
         machine.succeed(f"curl -sk --resolve {host}:443:127.0.0.1 -o /dev/null -w '%{{http_code}}' {url}/ | grep 404")
-        job = machine.succeed("muelle jobs -n 1").split()
-        assert job[1] == "success" and job[2].startswith("host-"), job
-        assert machine.succeed(f"stat -c %U /var/lib/muelle/status/{job[2]}.json").strip() == "muelle"
+        # jobs updated in the same second have no defined order: pick the line
+        [job] = [l.split() for l in machine.succeed("muelle jobs demo").splitlines() if " host-" in l]
+        assert job[1] == "success", job
+        for path in [f"/var/lib/muelle/status/{job[2]}.json", f"/var/lib/muelle/jobs/{job[2]}.json"]:
+            assert machine.succeed(f"stat -c %U {path}").strip() == "muelle", path
+        assert job[3:7] == ["demo", "teardown", "preview", "feat/cli"], job
+        # hook jobs show what they deployed; the public status file does not
+        machine.succeed(f"muelle jobs demo | grep -E '{id}[[:space:]]+demo[[:space:]]+deploy[[:space:]]+preview[[:space:]]+feat/cli'")
+        s = json.loads(machine.succeed(f"curl -sk {RESOLVE} https://muelle.test/status/{id}"))
+        assert "branch" not in s, s
         machine.succeed(f"muelle log {job[2]} | grep 'teardown of feat/cli (host)'")
         machine.fail("muelle rm demo prod")
         machine.succeed("muelle prune && muelle index")
-        machine.succeed("test -d /var/www/muelle/demo/prod/releases/" + SHA2)
+        machine.succeed(f"muelle releases demo prod | grep -E '^[*][[:space:]]+{SHA2}[[:space:]]'")
   '';
 }

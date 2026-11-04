@@ -10,9 +10,6 @@ dependencies = []
 muelle = "muelle.cli:main"
 muelle-client = "muelle.client:main"
 muelle-receive = "muelle.receive:main"
-muelle-worker = "muelle.worker:main"
-muelle-index = "muelle.index:main"
-muelle-prune = "muelle.prune:main"
 
 [build-system]
 requires = ["uv_build>=0.10,<0.12"]

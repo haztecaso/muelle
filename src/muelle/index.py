@@ -1,4 +1,4 @@
-"""muelle-index
+"""Listing (`muelle index`)
 
 Regenerates the listing of deployed next/preview environments served at the
 muelle domain: <stateDir>/index/{index.json,index.html}.
@@ -160,8 +160,3 @@ def write(config: Config) -> None:
         generated = utc_now()
         write_json_atomic(out / "index.json", {"generated": generated, "entries": entries})
         write_atomic(out / "index.html", render(entries, generated))
-
-
-def main() -> int:
-    write(Config.load())
-    return 0

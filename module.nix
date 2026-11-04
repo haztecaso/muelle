@@ -298,7 +298,7 @@ in
     stateDir = mkOption {
       type = types.str;
       default = "/var/lib/muelle";
-      description = "Status files, spool, logs and locks.";
+      description = "Status and job files, spool, logs and locks.";
     };
     port = mkOption {
       type = types.port;
@@ -437,6 +437,7 @@ in
       "d ${cfg.stateDir}/status 0755 muelle muelle 30d"
       "d ${cfg.stateDir}/spool 0700 muelle muelle -"
       "d ${cfg.stateDir}/log 0750 muelle muelle 30d"
+      "d ${cfg.stateDir}/jobs 0750 muelle muelle 30d"
       "d ${cfg.stateDir}/locks 0750 muelle muelle -"
       "d ${cfg.stateDir}/index 0755 muelle muelle -"
     ]
@@ -482,7 +483,7 @@ in
       environment.MUELLE_CONFIG = "${configFile}";
       serviceConfig = {
         Type = "oneshot";
-        ExecStart = "${muelle}/bin/muelle-prune";
+        ExecStart = "${muelle}/bin/muelle prune --no-record";
         User = "muelle";
         Group = "muelle";
         UMask = "0022";
