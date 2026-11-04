@@ -63,7 +63,9 @@ With `redirectFrom = [ "example.com" ]`, `next.example.com` and
   site's repo, fields match strict regexes.
 - Replay: `ts` must be within `maxSkew` seconds, and each `id` is accepted once.
 - Archives (zip or tar.gz) with absolute paths, `..` components, symlinks or
-  any non-regular file are rejected.
+  any non-regular file are rejected, as are archives whose total uncompressed
+  size exceeds `maxExtractedBytes` (2 GiB) or that hold more than
+  `maxArtifactFiles` (50 000) entries, checked before anything is written.
 - The receiver runs as the unprivileged `muelle` user under systemd
   `ProtectSystem=strict`, writable paths limited to `baseDir` and `stateDir`.
 - `/hooks/` is rate limited in nginx.
