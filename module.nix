@@ -49,6 +49,20 @@ let
           ];
           description = "Environments this site may deploy to. `[ \"prod\" ]` disables next and previews.";
         };
+        prodBranches = mkOption {
+          type = types.nullOr (types.listOf types.str);
+          default = [ "main" ];
+          example = [
+            "main"
+            "release"
+          ];
+          description = ''
+            Branches allowed to deploy to prod; requests for prod from any other
+            branch are rejected. Null allows every branch. The branch comes from
+            the signed payload, so this guards against mistakes (a feature branch
+            deploying to prod), not against a leaked secret.
+          '';
+        };
         domain = mkOption {
           type = types.nullOr types.str;
           default = null;
@@ -130,6 +144,7 @@ let
       inherit (s) envs repo;
       prod_url = s.prodUrl;
       preview_ttl_days = s.previewTtlDays;
+      prod_branches = s.prodBranches;
       artifact_url_prefix = "${cfg.artifactUrlBase}/${s.repo}/";
     }) cfg.sites;
   };

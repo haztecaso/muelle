@@ -228,6 +228,9 @@
         assert "stale" in r, r
         _, r = post("demo", {"site": "prodonly", "action": "deploy", "env": "prod"}, "deadbeef", expect_code=500)
         assert "site does not match" in r, r
+        _, r = post("demo", {"action": "deploy", "env": "prod", "branch": "feat/x", "sha": SHA1, "sha256": "0" * 64,
+                              "artifact_url": "http://127.0.0.1:8080/repos/owner/demo/x"}, "deadbeef", expect_code=500)
+        assert "may not deploy to prod" in r, r
 
     with subtest("unknown protocol is rejected"):
         _, r = post("demo", {"protocol": 2, "action": "deploy", "env": "prod"}, "deadbeef", expect_code=500)

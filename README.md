@@ -54,6 +54,11 @@ With `redirectFrom = [ "example.com" ]`, `next.example.com` and
 
 `envs = [ "prod" ]` disables next and previews for a site.
 
+Only the branches in `prodBranches` (default `[ "main" ]`) may deploy to
+prod; `null` lets any branch. The branch comes from the signed payload, so
+this catches mistakes (a wrong workflow expression, a feature branch
+deploying to prod) rather than a leaked secret.
+
 Previews are removed when a site has more than `keepPreviews` (10), and
 daily by `muelle-prune.timer` once their last deploy is older than
 `previewTtlDays` (30, per site `sites.<name>.previewTtlDays`; null disables).
@@ -63,8 +68,8 @@ daily by `muelle-prune.timer` once their last deploy is older than
 - HMAC-SHA256 over the raw body, per-site secret. A secret only works on its
   own site's hook.
 - The payload is then validated against the Nix-declared site table: site name
-  must match the hook, env must be allowed, artifact URL must belong to the
-  site's repo, fields match strict regexes.
+  must match the hook, env must be allowed, prod only from `prodBranches`,
+  artifact URL must belong to the site's repo, fields match strict regexes.
 - Replay: `ts` must be within `maxSkew` seconds, and each `id` is accepted once.
 - Archives (zip or tar.gz) with absolute paths, `..` components, symlinks or
   any non-regular file are rejected, as are archives whose total uncompressed

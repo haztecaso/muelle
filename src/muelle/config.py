@@ -11,6 +11,10 @@ from . import protocol
 from .state import StateDir
 
 
+def _tuples(data: dict[str, Any], *keys: str) -> dict[str, Any]:
+    return {k: tuple(data[k]) for k in keys if data.get(k) is not None}
+
+
 @dataclass(frozen=True)
 class Site:
     repo: str
@@ -18,6 +22,8 @@ class Site:
     envs: tuple[str, ...]
     artifact_url_prefix: str
     preview_ttl_days: int | None = None
+    # None: any branch may deploy to prod
+    prod_branches: tuple[str, ...] | None = ("main",)
 
 
 @dataclass(frozen=True)
@@ -35,7 +41,7 @@ class Config:
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> Config:
-        sites = {name: Site(**s | {"envs": tuple(s["envs"])}) for name, s in data["sites"].items()}
+        sites = {name: Site(**s | _tuples(s, "envs", "prod_branches")) for name, s in data["sites"].items()}
         typed: dict[str, Any] = {
             "base_dir": Path(data["base_dir"]),
             "state_dir": Path(data["state_dir"]),
