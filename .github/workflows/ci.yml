@@ -19,7 +19,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@v31
       - name: actionlint
         run: nix run nixpkgs#actionlint
@@ -29,7 +29,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # enable_kvm (default true) makes /dev/kvm usable for the NixOS VM test
       - uses: cachix/install-nix-action@v31
         with:
