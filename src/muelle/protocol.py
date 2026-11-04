@@ -16,7 +16,7 @@ PROTOCOL = 1
 SIGNATURE_HEADER = "X-Muelle-Signature"
 
 type Env = Literal["prod", "next", "preview"]
-type Action = Literal["deploy", "teardown"]
+type Action = Literal["deploy", "teardown", "announce", "abort"]
 ENVS: tuple[Env, ...] = ("prod", "next", "preview")
 
 
@@ -52,6 +52,7 @@ def deploy_payload(
     artifact_url: str,
     token: str,
     ts: int,
+    run_url: str = "",
 ) -> dict[str, Any]:
     return {
         "protocol": PROTOCOL,
@@ -64,6 +65,7 @@ def deploy_payload(
         "sha256": sha256,
         "artifact_url": artifact_url,
         "token": token,
+        "run_url": run_url,
         "ts": ts,
     }
 
@@ -76,5 +78,22 @@ def teardown_payload(*, id: str, site: str, branch: str, ts: int) -> dict[str, A
         "action": "teardown",
         "env": "preview",
         "branch": branch,
+        "ts": ts,
+    }
+
+
+def notice_payload(
+    *, id: str, site: str, action: Literal["announce", "abort"], env: str, branch: str, sha: str, run_url: str, ts: int
+) -> dict[str, Any]:
+    """Announce (a build started in CI) and abort (it failed or was cancelled before deploying)."""
+    return {
+        "protocol": PROTOCOL,
+        "id": id,
+        "site": site,
+        "action": action,
+        "env": env,
+        "branch": branch,
+        "sha": sha,
+        "run_url": run_url,
         "ts": ts,
     }

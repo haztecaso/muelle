@@ -8,6 +8,11 @@ branding:
 # The caller builds the site and uploads it with actions/upload-artifact@v4,
 # then passes artifact-id and artifact-digest here. The job needs
 # `permissions: { actions: read, deployments: write }`.
+#
+# Optionally, `action: announce` as the job's first step lists the build on the
+# host's listing while it runs, and `action: abort` under
+# `if: failure() || cancelled()` marks it failed if it never gets to deploy.
+# Both only warn on errors.
 inputs:
   endpoint:
     description: Base URL of the muelle receiver, e.g. https://muelle.example.com
@@ -19,7 +24,7 @@ inputs:
     description: HMAC secret shared with the host for this site
     required: true
   action:
-    description: deploy | teardown
+    description: deploy | teardown | announce | abort
     default: deploy
   environment:
     description: prod | next | preview

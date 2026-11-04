@@ -42,6 +42,7 @@ class Job:
     sha256: str
     artifact_url: str
     token: str
+    run_url: str
 
     @classmethod
     def from_payload(cls, id: str, payload: dict[str, Any]) -> Job:
@@ -112,7 +113,14 @@ def deploy(config: Config, job: Job, state: StateDir, fetch: Downloader = downlo
 
     write_json_atomic(
         slot_dir / "meta.json",
-        {"site": job.site, "env": job.env, "branch": job.branch, "sha": job.sha, "deployed_at": utc_now()},
+        {
+            "site": job.site,
+            "env": job.env,
+            "branch": job.branch,
+            "sha": job.sha,
+            "run_url": job.run_url,
+            "deployed_at": utc_now(),
+        },
     )
 
     prune(subdirs(releases), config.keep_releases, mtime, protect=job.sha)
@@ -142,9 +150,19 @@ def teardown(config: Config, site: str, branch: str) -> int:
     return removed
 
 
+def refresh_index(config: Config) -> None:
+    """Best effort: a listing that fails to render must not fail the job."""
+    try:
+        index.write(config)
+    except Exception as e:
+        log(f"index refresh failed: {type(e).__name__}: {e}")
+
+
 def process(config: Config, job: Job, fetch: Downloader = download) -> None:
     state = config.state
     (config.base_dir / job.site).mkdir(parents=True, exist_ok=True)
+    # lists the job as deploying, also while it waits for the site lock
+    refresh_index(config)
     with state.lock(job.site):
         log(f"[{utc_now()}] {job.action} site={job.site} env={job.env} branch={job.branch} sha={job.sha}")
         match job.action:
@@ -156,8 +174,8 @@ def process(config: Config, job: Job, fetch: Downloader = download) -> None:
                 url, message = "", f"teardown of {job.branch} done"
             case action:
                 raise DeployError(f"invalid action '{action}'")
-        index.write(config)
         state.write_status(job.id, "success", message, url)
+    refresh_index(config)
 
 
 def _raise_terminated(signum: int, _frame: object) -> None:
@@ -194,4 +212,5 @@ def process_spooled(config: Config, id: str, fetch: Downloader = download) -> in
         log(traceback.format_exc())
         message = f"internal error (see host log {id})"
     state.write_status(id, "failure", f"failed: {message}", url)
+    refresh_index(config)
     return 1

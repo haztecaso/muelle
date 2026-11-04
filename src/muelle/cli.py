@@ -9,7 +9,6 @@ requests: a `host-...` status file and log, then the listing is refreshed.
 """
 
 import argparse
-import json
 import os
 import re
 import secrets
@@ -20,7 +19,7 @@ from collections.abc import Generator, Sequence
 from contextlib import contextmanager, redirect_stdout
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, Any
+from typing import IO
 
 from . import index, protocol, worker
 from . import prune as prune_mod
@@ -103,16 +102,7 @@ JOB_COLUMNS = ("updated", "state", "id", "site", "action", "env", "branch", "mes
 
 
 def jobs(config: Config, limit: int, site: str | None, out: IO[str]) -> None:
-    entries: list[dict[str, Any]] = []
-    for path in (config.state_dir / "status").glob("*.json"):
-        try:
-            status = json.loads(path.read_text())
-        except OSError, ValueError:
-            continue
-        entry = config.state.read_job(path.stem) | status
-        if site is None or entry.get("site") == site:
-            entries.append(entry)
-    entries.sort(key=lambda e: str(e.get("updated", "")), reverse=True)
+    entries = [e for e in config.state.jobs() if site is None or e.get("site") == site]
     _table([[str(e.get(k) or "-") for k in JOB_COLUMNS] for e in entries[:limit]], out)
 
 

@@ -34,3 +34,8 @@ def test_payloads_carry_protocol_version() -> None:
     assert teardown["protocol"] == protocol.PROTOCOL
     assert teardown["env"] == "preview"
     assert teardown["action"] == "teardown"
+
+    notice = protocol.notice_payload(
+        id="x" * 8, site="demo", action="announce", env="next", branch="b", sha="a" * 40, run_url="", ts=1
+    )
+    assert notice["protocol"] == protocol.PROTOCOL

@@ -292,6 +292,32 @@
                 "MUELLE_ARTIFACT_URL": "http://127.0.0.1:8080/repos/owner/demo/junk.zip",
                 "MUELLE_SHA256": "0" * 64}, check=False)
 
+    with subtest("listing follows announce, abort and deploy"):
+        def jobs():
+            idx = json.loads(machine.succeed(f"curl -skf {RESOLVE} -H 'X-Gate: open' https://muelle.test/index.json"))
+            return idx, [(j["branch"], j["action"], j["state"]) for j in idx["jobs"] if j["branch"] == "feat/listed"]
+        run = "https://github.com/owner/demo/actions/runs/99"
+        common = {"GITHUB_REPOSITORY": "owner/demo", "MUELLE_ENV": "preview", "MUELLE_BRANCH": "feat/listed",
+                  "MUELLE_SHA": "5" * 40}
+        out = client(common | {"MUELLE_ACTION": "announce"})
+        assert "muelle: announce recorded" in out, out
+        idx, listed = jobs()
+        assert listed == [("feat/listed", "announce", "queued")], idx
+        assert [j["run_url"] for j in idx["jobs"] if j["branch"] == "feat/listed"] == [run], idx
+        machine.succeed(f"curl -skf {RESOLVE} -H 'X-Gate: open' https://muelle.test/ | grep -F 'http-equiv=\"refresh\"'")
+        client(common | {"MUELLE_ACTION": "abort"})
+        assert jobs()[1] == [("feat/listed", "abort", "failure")], jobs()
+        # a deploy of the branch replaces the failure, and links its run
+        _, digest = make_artifact("listed.zip", "listed")
+        client(common | {"MUELLE_ARTIFACT_URL": "http://127.0.0.1:8080/repos/owner/demo/listed.zip",
+                         "MUELLE_SHA256": digest, "MUELLE_TOKEN": "ghs_dummy"})
+        idx, listed = jobs()
+        assert listed == [], idx
+        assert [e["run_url"] for e in idx["entries"] if e["branch"] == "feat/listed"] == [run], idx
+        # a rejected notice only warns
+        out = client(common | {"MUELLE_ACTION": "announce", "MUELLE_SECRET": "wrong"})
+        assert "::warning::muelle announce not recorded" in out, out
+
     with subtest("service restarts cleanly and keeps serving"):
         machine.succeed("systemctl restart webhook.service")
         machine.wait_for_unit("webhook.service")
