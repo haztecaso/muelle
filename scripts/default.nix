@@ -9,6 +9,7 @@
   gnutar,
   gzip,
   jq,
+  openssl,
   unzip,
   util-linux,
 }:
@@ -26,6 +27,11 @@ let
         ${builtins.readFile file}
       '';
     };
+  index = mk "muelle-index" ./index.sh [
+    coreutils
+    jq
+    util-linux
+  ] "";
   receive = mk "muelle-receive" ./receive.sh [
     coreutils
     jq
@@ -41,11 +47,24 @@ let
     jq
     unzip
     util-linux
-  ] "";
+  ] "MUELLE_INDEX=${index}/bin/muelle-index";
+  # standalone (no lib.sh): runs on CI runners through action.yml
+  client = writeShellApplication {
+    name = "muelle-client";
+    runtimeInputs = [
+      coreutils
+      curl
+      jq
+      openssl
+    ];
+    text = builtins.readFile ./client.sh;
+  };
 in
 symlinkJoin {
   name = "muelle";
   paths = [
+    client
+    index
     receive
     worker
   ];

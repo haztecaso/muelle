@@ -1,0 +1,70 @@
+name: muelle deploy
+description: Ask a muelle host to deploy (or tear down) a static site built in this workflow.
+author: haztecaso
+branding:
+  icon: upload-cloud
+  color: blue
+
+# The caller builds the site and uploads it with actions/upload-artifact@v4,
+# then passes artifact-id and artifact-digest here. The job needs
+# `permissions: { actions: read, deployments: write }`.
+inputs:
+  endpoint:
+    description: Base URL of the muelle receiver, e.g. https://muelle.example.com
+    required: true
+  site:
+    description: Site name as declared in services.muelle.sites
+    required: true
+  secret:
+    description: HMAC secret shared with the host for this site
+    required: true
+  action:
+    description: deploy | teardown
+    default: deploy
+  environment:
+    description: prod | next | preview
+    default: preview
+  artifact-id:
+    description: artifact-id output of actions/upload-artifact (deploy)
+    default: ""
+  artifact-digest:
+    description: artifact-digest output of actions/upload-artifact (deploy)
+    default: ""
+  branch:
+    description: Branch name; defaults to the triggering branch (the deleted one for `delete` events)
+    default: ""
+  timeout-seconds:
+    description: How long to wait for the host to finish
+    default: "600"
+  github-token:
+    description: Token used to download the artifact and to report GitHub Deployments
+    default: ${{ github.token }}
+  deployments:
+    description: Report GitHub Deployment state (true | false)
+    default: "true"
+
+outputs:
+  url:
+    description: URL of the deployed environment
+    value: ${{ steps.client.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - id: client
+      shell: bash
+      env:
+        MUELLE_ENDPOINT: ${{ inputs.endpoint }}
+        MUELLE_SITE: ${{ inputs.site }}
+        MUELLE_SECRET: ${{ inputs.secret }}
+        MUELLE_ACTION: ${{ inputs.action }}
+        MUELLE_ENV: ${{ inputs.environment }}
+        MUELLE_ARTIFACT_ID: ${{ inputs.artifact-id }}
+        MUELLE_SHA256: ${{ inputs.artifact-digest }}
+        MUELLE_BRANCH: ${{ inputs.branch || (github.event_name == 'delete' && github.event.ref) || '' }}
+        MUELLE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        MUELLE_TIMEOUT: ${{ inputs.timeout-seconds }}
+        MUELLE_TOKEN: ${{ inputs.github-token }}
+        MUELLE_DEPLOYMENTS: ${{ inputs.deployments }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: '"$GITHUB_ACTION_PATH/scripts/client.sh"'

@@ -241,6 +241,18 @@ in
       };
       description = "Default extra vhost attributes for next/preview vhosts.";
     };
+    indexVhost = mkOption {
+      type = types.attrs;
+      default = cfg.previewVhostDefaults;
+      defaultText = lib.literalExpression "config.services.muelle.previewVhostDefaults";
+      example = {
+        enableAuth = true;
+      };
+      description = ''
+        Extra nginx vhost attributes for the listing of next/preview deployments
+        served at `previewDomain`. Gate it: it reveals branch names and URLs.
+      '';
+    };
     sites = mkOption {
       type = types.attrsOf siteType;
       default = { };
@@ -275,6 +287,7 @@ in
       "d ${cfg.stateDir}/spool 0700 muelle muelle -"
       "d ${cfg.stateDir}/log 0750 muelle muelle 30d"
       "d ${cfg.stateDir}/locks 0750 muelle muelle -"
+      "d ${cfg.stateDir}/index 0755 muelle muelle -"
     ]
     ++ lib.mapAttrsToList (name: _: "d ${cfg.baseDir}/${name} 0755 muelle muelle -") cfg.sites;
 
@@ -287,6 +300,9 @@ in
       environment.MUELLE_CONFIG = "${configFile}";
       hooksTemplated = lib.mapAttrs hook cfg.sites;
     };
+
+    # refresh the listing on (re)start, e.g. after sites change
+    systemd.services.webhook.preStart = "${muelle}/bin/muelle-index";
 
     systemd.services.webhook.serviceConfig = {
       LoadCredential = lib.mapAttrsToList (name: s: "muelle-${name}:${s.secretFile}") cfg.sites;
@@ -332,6 +348,20 @@ in
             '';
           };
         };
+      }
+      {
+        ${cfg.previewDomain} = mkMerge [
+          {
+            useACMEHost = cfg.acmeHost;
+            forceSSL = true;
+            root = "${cfg.stateDir}/index";
+            extraConfig = ''
+              add_header X-Robots-Tag "noindex, nofollow" always;
+              add_header Cache-Control "no-store" always;
+            '';
+          }
+          cfg.indexVhost
+        ];
       }
       previewVhosts
       redirectVhosts

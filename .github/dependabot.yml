@@ -1,0 +1,7 @@
+version: 2
+updates:
+  # workflows and the composite action.yml
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
