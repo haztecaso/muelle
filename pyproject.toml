@@ -7,6 +7,7 @@ requires-python = ">=3.14"
 dependencies = []
 
 [project.scripts]
+muelle = "muelle.cli:main"
 muelle-client = "muelle.client:main"
 muelle-receive = "muelle.receive:main"
 muelle-worker = "muelle.worker:main"

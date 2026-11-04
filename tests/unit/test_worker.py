@@ -81,9 +81,9 @@ def test_prune_keeps_newest_and_protected(tmp_path: Path) -> None:
         (tmp_path / name).mkdir()
         os.utime(tmp_path / name, (mtime, mtime))
         dirs.append(tmp_path / name)
-    worker.prune(dirs, 10, worker._mtime)
+    worker.prune(dirs, 10, worker.mtime)
     assert len(list(tmp_path.iterdir())) == 4
-    worker.prune(dirs, 2, worker._mtime, protect="a")
+    worker.prune(dirs, 2, worker.mtime, protect="a")
     assert sorted(p.name for p in tmp_path.iterdir()) == ["a", "b", "c"]
 
 

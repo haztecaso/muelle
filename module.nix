@@ -149,6 +149,19 @@ let
     }) cfg.sites;
   };
 
+  # admin CLI: runs as muelle (like the worker) with the module's config
+  cli = pkgs.writeShellScriptBin "muelle" ''
+    export MUELLE_CONFIG=${configFile}
+    umask 0022
+    cmd=(${muelle}/bin/muelle "$@")
+    case "$(id -un)" in
+      muelle) exec "''${cmd[@]}" ;;
+      root) exec ${pkgs.util-linux}/bin/runuser -u muelle -- "''${cmd[@]}" ;;
+      # sudo resets the environment: run this wrapper again as muelle
+      *) exec sudo -u muelle "$0" "$@" ;;
+    esac
+  '';
+
   hook =
     name: _:
     builtins.toJSON {
@@ -415,6 +428,9 @@ in
     };
     users.groups.muelle = { };
 
+    # wins over a plain muelle package in systemPackages
+    environment.systemPackages = [ (lib.hiPrio cli) ];
+
     systemd.tmpfiles.rules = [
       "d ${cfg.baseDir} 0755 muelle muelle -"
       "d ${cfg.stateDir} 0755 muelle muelle -"
@@ -439,7 +455,7 @@ in
     };
 
     # refresh the listing on (re)start, e.g. after sites change
-    systemd.services.webhook.preStart = "${muelle}/bin/muelle-index";
+    systemd.services.webhook.preStart = "${muelle}/bin/muelle index";
 
     systemd.services.webhook.serviceConfig = {
       LoadCredential = lib.mapAttrsToList (name: s: "muelle-${name}:${s.secretFile}") cfg.sites;
@@ -462,7 +478,7 @@ in
     };
 
     systemd.services.muelle-prune = {
-      description = "Remove expired muelle previews";
+      description = "Prune muelle previews and releases";
       environment.MUELLE_CONFIG = "${configFile}";
       serviceConfig = {
         Type = "oneshot";

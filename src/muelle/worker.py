@@ -53,7 +53,7 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
-def _subdirs(directory: Path) -> list[Path]:
+def subdirs(directory: Path) -> list[Path]:
     if not directory.is_dir():
         return []
     return [p for p in directory.iterdir() if p.is_dir() and not p.is_symlink() and not p.name.startswith(".")]
@@ -67,12 +67,12 @@ def prune(dirs: list[Path], keep: int, key: Callable[[Path], float], protect: st
             shutil.rmtree(path)
 
 
-def _mtime(path: Path) -> float:
+def mtime(path: Path) -> float:
     return path.stat().st_mtime if path.exists() else 0
 
 
 def preview_slots(site_dir: Path) -> list[Path]:
-    return [p for p in _subdirs(site_dir) if protocol.is_preview_slot(p.name)]
+    return [p for p in subdirs(site_dir) if protocol.is_preview_slot(p.name)]
 
 
 def deploy(config: Config, job: Job, state: StateDir, fetch: Downloader = download) -> str:
@@ -116,22 +116,30 @@ def deploy(config: Config, job: Job, state: StateDir, fetch: Downloader = downlo
         {"site": job.site, "env": job.env, "branch": job.branch, "sha": job.sha, "deployed_at": utc_now()},
     )
 
-    prune(_subdirs(releases), config.keep_releases, _mtime, protect=job.sha)
+    prune(subdirs(releases), config.keep_releases, mtime, protect=job.sha)
     if job.env == "preview":
-        prune(preview_slots(site_dir), config.keep_previews, lambda slot: _mtime(slot / "meta.json"))
+        prune(preview_slots(site_dir), config.keep_previews, lambda slot: mtime(slot / "meta.json"))
     log(f"deployed {url}")
     return url
 
 
-def teardown(config: Config, job: Job) -> int:
-    """Removes every preview of the job's branch; returns how many."""
+def current_release(slot_dir: Path) -> str:
+    """Name of the release `current` points to, "" if none."""
+    try:
+        return (slot_dir / "current").readlink().name
+    except OSError:
+        return ""
+
+
+def teardown(config: Config, site: str, branch: str) -> int:
+    """Removes every preview of BRANCH; returns how many."""
     removed = 0
-    for slot in preview_slots(config.base_dir / job.site):
-        if index.read_meta(slot).get("branch") == job.branch:
+    for slot in preview_slots(config.base_dir / site):
+        if index.read_meta(slot).get("branch") == branch:
             log(f"removing preview {slot.name}")
             shutil.rmtree(slot)
             removed += 1
-    log(f"removed {removed} preview(s) for branch {job.branch}")
+    log(f"removed {removed} preview(s) for branch {branch}")
     return removed
 
 
@@ -145,7 +153,7 @@ def process(config: Config, job: Job, fetch: Downloader = download) -> None:
                 url = deploy(config, job, state, fetch)
                 message = f"deployed {job.sha}"
             case "teardown":
-                teardown(config, job)
+                teardown(config, job.site, job.branch)
                 url, message = "", f"teardown of {job.branch} done"
             case action:
                 raise DeployError(f"invalid action '{action}'")
