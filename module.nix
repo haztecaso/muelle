@@ -13,7 +13,7 @@ let
     types
     ;
   cfg = config.services.muelle;
-  muelle = pkgs.callPackage ./scripts { };
+  muelle = pkgs.callPackage ./package.nix { };
 
   escapeRe = lib.replaceStrings [ "." "-" ] [ "\\." "\\-" ];
 
@@ -103,19 +103,19 @@ let
     }
   );
 
+  # keys match the fields of muelle.config.Config
   configFile = (pkgs.formats.json { }).generate "muelle-config.json" {
-    inherit (cfg)
-      domain
-      baseDir
-      stateDir
-      maxSkew
-      keepReleases
-      keepPreviews
-      maxArtifactBytes
-      ;
+    inherit (cfg) domain;
+    base_dir = cfg.baseDir;
+    state_dir = cfg.stateDir;
+    max_skew = cfg.maxSkew;
+    keep_releases = cfg.keepReleases;
+    keep_previews = cfg.keepPreviews;
+    max_artifact_bytes = cfg.maxArtifactBytes;
     sites = lib.mapAttrs (name: s: {
-      inherit (s) envs prodUrl repo;
-      artifactUrlPrefix = "${cfg.artifactUrlBase}/${s.repo}/";
+      inherit (s) envs repo;
+      prod_url = s.prodUrl;
+      artifact_url_prefix = "${cfg.artifactUrlBase}/${s.repo}/";
     }) cfg.sites;
   };
 

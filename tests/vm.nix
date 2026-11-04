@@ -19,11 +19,13 @@
         certs."demo.test".extraDomainNames = [ "*.demo.test" ];
       };
       users.users.nginx.extraGroups = [ "acme" ];
+      # muelle-client (python) resolves and verifies TLS like on a runner
+      networking.hosts."127.0.0.1" = [ "muelle.test" ];
 
       environment.etc."muelle-demo".text = "deadbeef";
       environment.etc."muelle-prodonly".text = "cafebabe";
       environment.systemPackages = with pkgs; [
-        (callPackage ../scripts { })
+        (callPackage ../package.nix { })
         jq
         openssl
         zip
@@ -261,7 +263,7 @@
         env = {
             "MUELLE_ENDPOINT": "https://muelle.test", "MUELLE_SITE": "demo",
             "MUELLE_SECRET": "deadbeef", "MUELLE_DEPLOYMENTS": "false",
-            "MUELLE_CURL_OPTS": "-k --resolve muelle.test:443:127.0.0.1",
+            "SSL_CERT_FILE": "/var/lib/acme/.minica/cert.pem",
             "MUELLE_POLL_INTERVAL": "1", "MUELLE_TIMEOUT": "60",
             "GITHUB_OUTPUT": "/tmp/gh-output", "GITHUB_RUN_ID": "99",
         } | extra

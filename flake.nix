@@ -16,15 +16,25 @@
       nixosModules.default = import ./module.nix;
 
       packages = forAll (pkgs: rec {
-        muelle = pkgs.callPackage ./scripts { };
+        muelle = pkgs.callPackage ./package.nix { };
         default = muelle;
       });
 
       checks = forAll (pkgs: {
-        scripts = self.packages.${pkgs.stdenv.hostPlatform.system}.muelle;
+        package = self.packages.${pkgs.stdenv.hostPlatform.system}.muelle;
         vm = pkgs.testers.runNixOSTest (
           import ./tests/vm.nix { muelleModule = self.nixosModules.default; }
         );
+      });
+
+      devShells = forAll (pkgs: {
+        default = pkgs.mkShell {
+          packages = [
+            pkgs.uv
+            pkgs.python314
+          ];
+          env.UV_PYTHON_DOWNLOADS = "never";
+        };
       });
 
       formatter = forAll (pkgs: pkgs.nixfmt);
