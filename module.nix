@@ -49,9 +49,32 @@ let
           ];
           description = "Environments this site may deploy to. `[ \"prod\" ]` disables next and previews.";
         };
+        domain = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          example = "example.com";
+          description = ''
+            Domain of the prod environment. When set, muelle declares its nginx vhost:
+            HTTPS only, rooted at `root`, `try_files` like next/preview, logs in
+            `/var/log/nginx/<site>-{error,access}.log`. Extend it through
+            `services.nginx.virtualHosts.<domain>` (e.g. extra locations).
+          '';
+        };
+        acmeHost = mkOption {
+          type = types.nullOr types.str;
+          default = config.domain;
+          defaultText = lib.literalExpression "domain";
+          description = "ACME cert (security.acme.certs name) of the prod vhost.";
+        };
+        extraConfig = mkOption {
+          type = types.lines;
+          default = "";
+          description = "Extra nginx config for the prod vhost's server block.";
+        };
         prodUrl = mkOption {
           type = types.str;
           example = "https://example.com";
+          defaultText = lib.literalExpression ''"https://''${domain}" if domain is set'';
           description = "Public URL of the prod environment, reported back to CI.";
         };
         redirectFrom = mkOption {
@@ -73,9 +96,10 @@ let
           type = types.str;
           readOnly = true;
           default = "${cfg.baseDir}/${name}/prod/current";
-          description = "Document root of the prod environment (a symlink flipped on deploy). Use it in your own vhost.";
+          description = "Document root of the prod environment (a symlink flipped on deploy). Use it in your own vhost if `domain` is unset.";
         };
       };
+      config.prodUrl = lib.mkIf (config.domain != null) (lib.mkDefault "https://${config.domain}");
     }
   );
 
@@ -152,6 +176,25 @@ let
       s.previewVhost
     ])
   ) (lib.filterAttrs (_: s: lib.any (e: e != "prod") s.envs) cfg.sites);
+
+  prodSites = lib.filterAttrs (_: s: s.domain != null) cfg.sites;
+
+  prodVhosts = lib.mapAttrs' (
+    name: s:
+    lib.nameValuePair s.domain {
+      useACMEHost = s.acmeHost;
+      forceSSL = true;
+      inherit (s) root;
+      extraConfig = ''
+        error_log /var/log/nginx/${name}-error.log warn;
+        access_log /var/log/nginx/${name}-access.log${
+          lib.optionalString (cfg.accessLogFormat != null) " ${cfg.accessLogFormat}"
+        };
+        try_files $uri $uri.html $uri/ =404;
+      ''
+      + s.extraConfig;
+    }
+  ) prodSites;
 
   redirectVhosts = lib.listToAttrs (
     lib.concatLists (
@@ -233,6 +276,12 @@ in
       default = "20r/m";
       description = "nginx `limit_req` rate for `/hooks/`, per client IP (burst 5).";
     };
+    accessLogFormat = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "withHost";
+      description = "nginx `log_format` name for prod vhost access logs (must be defined elsewhere). Null uses nginx's default.";
+    };
     previewVhostDefaults = mkOption {
       type = types.attrs;
       default = { };
@@ -271,7 +320,13 @@ in
       assertion =
         builtins.match "[a-z0-9][a-z0-9-]*" name != null && builtins.match "prod|next" name == null;
       message = "services.muelle.sites.${name}: name must match [a-z0-9][a-z0-9-]*";
-    }) cfg.sites;
+    }) cfg.sites
+    ++ [
+      {
+        assertion = lib.allUnique (lib.mapAttrsToList (_: s: s.domain) prodSites);
+        message = "services.muelle.sites: two sites share the same domain";
+      }
+    ];
 
     users.users.muelle = {
       isSystemUser = true;
@@ -366,6 +421,7 @@ in
           cfg.indexVhost
         ];
       }
+      prodVhosts
       previewVhosts
       redirectVhosts
     ];
