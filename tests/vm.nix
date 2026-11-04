@@ -320,5 +320,23 @@
                                "artifact_url": "http://127.0.0.1:8080/repos/owner/demo/dd.tgz"}, "deadbeef")
         s = wait_status(id, "failure")
         assert "'..'" in s["message"], s
+
+    with subtest("admin CLI"):
+        out = machine.succeed("muelle status demo")
+        assert "next" in out and "https://next-demo.muelle.test" in out, out
+        machine.succeed("muelle releases demo prod | grep -E '^[*][[:space:]]+2{40}[[:space:]]'")
+        id, resp = deploy("demo", "preview", SHA1, "cli.zip", branch="feat/cli")
+        wait_status(id)
+        url = json.loads(resp)["url"]
+        host = url.removeprefix("https://")
+        machine.succeed("muelle teardown demo feat/cli | grep 'removed 1 preview'")
+        machine.succeed(f"curl -sk --resolve {host}:443:127.0.0.1 -o /dev/null -w '%{{http_code}}' {url}/ | grep 404")
+        job = machine.succeed("muelle jobs -n 1").split()
+        assert job[1] == "success" and job[2].startswith("host-"), job
+        assert machine.succeed(f"stat -c %U /var/lib/muelle/status/{job[2]}.json").strip() == "muelle"
+        machine.succeed(f"muelle log {job[2]} | grep 'teardown of feat/cli (host)'")
+        machine.fail("muelle rm demo prod")
+        machine.succeed("muelle prune && muelle index")
+        machine.succeed("test -d /var/www/muelle/demo/prod/releases/" + SHA2)
   '';
 }

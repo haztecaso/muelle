@@ -60,7 +60,7 @@ this catches mistakes (a wrong workflow expression, a feature branch
 deploying to prod) rather than a leaked secret.
 
 Previews are removed when a site has more than `keepPreviews` (10), and
-daily by `muelle-prune.timer` once their last deploy is older than
+daily by `muelle-prune.timer` (or on demand with `muelle prune`) once their last deploy is older than
 `previewTtlDays` (30, per site `sites.<name>.previewTtlDays`; null disables).
 
 ## Security model
@@ -174,6 +174,27 @@ sudo -u muelle ln -sfn releases/initial "$base/current"
 
 Content that is not produced by the site build (archives, uploads) disappears
 on the next deploy; serve it from a separate path.
+
+### Admin CLI
+
+The module installs `muelle` for operations that should not depend on CI.
+It uses the module's config and the worker's locks, and runs as the `muelle`
+user (through `runuser` as root, `sudo -u muelle` otherwise).
+
+```sh
+muelle status [<site>]           # slots, current release, deploy date, URL
+muelle releases <site> <slot>    # kept releases of prod, next or a preview (* = current)
+muelle prune [<site>]            # apply previewTtlDays, keepPreviews, keepReleases now
+muelle teardown <site> <branch>  # remove every preview of a branch
+muelle rm <site> <slot>          # remove next or one preview (never prod)
+muelle index                     # rebuild the listing
+muelle jobs [-n 20]              # recent jobs (hook requests and host actions)
+muelle log <id>                  # a job's log
+```
+
+`prune`, `teardown` and `rm` are recorded like hook requests (a `host-...`
+job with status file and log) and refresh the listing. `muelle-prune.timer`
+runs the same pruning daily.
 
 ## GitHub Action
 
@@ -307,7 +328,7 @@ mismatches as 500 too). `GET /status/<id>` returns
 
 ## Development
 
-Client, receiver, worker and index are one Python 3.14 package without
+Client, receiver, worker, index and admin CLI are one Python 3.14 package without
 runtime dependencies (`src/muelle`), managed with uv:
 
 ```sh
