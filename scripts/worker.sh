@@ -12,6 +12,14 @@ action=$(jget "$payload" action)
 env=$(jget "$payload" env)
 branch=$(jget "$payload" branch)
 sha=$(jget "$payload" sha)
+repo=$(jq -r --arg s "$site" '.sites[$s].repo' "$MUELLE_CONFIG")
+workflow_url=$(jget "$payload" workflow_url)
+status_meta=$(
+  jq -cn \
+    --arg action "$action" --arg site "$site" --arg env "$env" --arg branch "$branch" \
+    --arg sha "$sha" --arg repo "$repo" --arg workflow_url "$workflow_url" \
+    '{action: $action, site: $site, env: $env, branch: $branch, sha: $sha, repo: $repo, workflow_url: $workflow_url}'
+)
 site_dir="$BASE_DIR/$site"
 url=""
 tmp=""
@@ -20,7 +28,8 @@ on_exit() {
   local rc=$?
   if [[ -n $tmp && -d $tmp ]]; then rm -rf "$tmp"; fi
   if ((rc != 0)); then
-    write_status "$id" failure "failed (exit $rc): $(tail -n 3 "$STATE_DIR/log/$id.log" 2>/dev/null | tr '\n' ' ')" "$url"
+    write_status "$id" failure "failed (exit $rc): $(tail -n 3 "$STATE_DIR/log/$id.log" 2>/dev/null | tr '\n' ' ')" "$url" "$status_meta"
+    "$MUELLE_INDEX"
   fi
 }
 trap on_exit EXIT
@@ -100,7 +109,8 @@ deploy() {
   token=$(jget "$payload" token)
   max=$(cfg .maxArtifactBytes)
 
-  write_status "$id" in_progress "downloading" "$url"
+  write_status "$id" in_progress "downloading" "$url" "$status_meta"
+  "$MUELLE_INDEX"
   mkdir -p "$slot_dir/releases"
   tmp=$(mktemp -d "$slot_dir/.tmp.XXXXXX")
 
@@ -119,7 +129,8 @@ deploy() {
 
   echo "$sha256  $tmp/artifact" | sha256sum -c --quiet - || die "sha256 mismatch"
 
-  write_status "$id" in_progress "extracting" "$url"
+  write_status "$id" in_progress "extracting" "$url" "$status_meta"
+  "$MUELLE_INDEX"
   extract "$tmp/artifact" "$tmp/root"
   chmod -R u=rwX,go=rX "$tmp/root"
 
@@ -173,12 +184,12 @@ mkdir -p "$site_dir"
 case $action in
 deploy)
   deploy
+  write_status "$id" success "deployed $sha" "$url" "$status_meta"
   "$MUELLE_INDEX"
-  write_status "$id" success "deployed $sha" "$url"
   ;;
 teardown)
   teardown
+  write_status "$id" success "teardown of $branch done" "" "$status_meta"
   "$MUELLE_INDEX"
-  write_status "$id" success "teardown of $branch done"
   ;;
 esac

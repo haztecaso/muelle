@@ -44,10 +44,11 @@ set GitHub Deployment state
 
 `domain` is the single host muelle answers on: `/hooks/<site>` and
 `/status/<id>` for CI, and `/`, which lists every deployed next and preview
-environment (also as `index.json`). The listing reveals branch names and URLs,
-so gate it with `indexVhost` (defaults to `previewVhostDefaults`). Gate
-`location /` only: `/hooks/` and `/status/` are separate locations and must
-stay reachable from CI.
+environment plus queued/running/failed deploy workflows (also as `index.json`,
+under `entries` and `workflows`). The listing reveals branch names and URLs, so
+gate it with `indexVhost` (defaults to `previewVhostDefaults`). Gate `location
+/` only: `/hooks/` and `/status/` are separate locations and must stay
+reachable from CI.
 
 With `redirectFrom = [ "example.com" ]`, `next.example.com` and
 `<hash>.example.com` 302 to `<slot>-<site>.<domain>`.

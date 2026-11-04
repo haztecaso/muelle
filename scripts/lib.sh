@@ -30,16 +30,17 @@ status_path() {
   printf '%s/status/%s.json' "$STATE_DIR" "$1"
 }
 
-# write_status ID STATE MESSAGE [URL]
+# write_status ID STATE MESSAGE [URL] [META_JSON]
 write_status() {
-  local id=$1 state=$2 msg=$3 url=${4:-}
+  local id=$1 state=$2 msg=$3 url=${4:-} meta=${5:-{}}
   local dest tmp
   dest=$(status_path "$id")
   tmp=$(mktemp "$STATE_DIR/status/.tmp.XXXXXX")
   jq -n \
     --arg id "$id" --arg state "$state" --arg message "$msg" --arg url "$url" \
+    --argjson meta "$meta" \
     --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{id: $id, state: $state, message: $message, url: $url, updated: $updated}' >"$tmp"
+    '({id: $id, state: $state, message: $message, url: $url, updated: $updated} + $meta)' >"$tmp"
   chmod 0644 "$tmp"
   mv -f "$tmp" "$dest"
 }

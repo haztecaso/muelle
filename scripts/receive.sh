@@ -15,6 +15,7 @@ action=$(jget "$payload" action)
 env=$(jget "$payload" env)
 branch=$(jget "$payload" branch)
 sha=$(jget "$payload" sha)
+workflow_url=$(jget "$payload" workflow_url)
 ts=$(jget "$payload" ts)
 
 # Bumped together with the workflow's major version on breaking payload changes.
@@ -44,6 +45,10 @@ deploy)
   [[ $artifact_url == "$prefix"* ]] || die "artifact_url not allowed (must start with $prefix)"
   valid '^[A-Za-z0-9._/:?=&%-]+$' "$artifact_url" || die "invalid artifact_url"
   [[ $artifact_url != *..* ]] || die "invalid artifact_url"
+  if [[ -n $workflow_url ]]; then
+    valid '^[A-Za-z0-9._/:?=&%-]+$' "$workflow_url" || die "invalid workflow_url"
+    [[ $workflow_url != *..* ]] || die "invalid workflow_url"
+  fi
   slot=$(slot_for "$site" "$env" "$branch" "$sha")
   url=$(url_for "$site" "$slot")
   ;;
@@ -64,7 +69,15 @@ spool="$STATE_DIR/spool/$id.json"
   printf '%s' "$payload" >"$spool"
 ) 2>/dev/null || die "id already used"
 
-write_status "$id" queued "queued" "$url"
+status_meta=$(
+  jq -cn \
+    --arg action "$action" --arg site "$site" --arg env "$env" --arg branch "$branch" \
+    --arg sha "$sha" --arg repo "$(jq -r --arg s "$site" '.sites[$s].repo' "$MUELLE_CONFIG")" \
+    --arg workflow_url "$workflow_url" \
+    '{action: $action, site: $site, env: $env, branch: $branch, sha: $sha, repo: $repo, workflow_url: $workflow_url}'
+)
+write_status "$id" queued "queued" "$url" "$status_meta"
+"$MUELLE_INDEX"
 
 setsid -f "$MUELLE_WORKER" "$id" >>"$STATE_DIR/log/$id.log" 2>&1 </dev/null
 

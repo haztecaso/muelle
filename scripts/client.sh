@@ -64,11 +64,16 @@ deploy)
     ) || deployment=""
     set_state in_progress
   fi
+  workflow_url=""
+  if [[ -n ${GITHUB_SERVER_URL:-} && -n ${GITHUB_REPOSITORY:-} && -n ${GITHUB_RUN_ID:-} ]]; then
+    workflow_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+  fi
   body=$(jq -cn --arg id "$id" --arg site "$MUELLE_SITE" --arg env "$env" --arg branch "$branch" \
     --arg sha "$sha" --arg sha256 "$digest" --arg token "${MUELLE_TOKEN:-}" --arg url "$artifact_url" \
+    --arg workflow_url "$workflow_url" \
     --argjson ts "$(date +%s)" \
     '{protocol: 1, id: $id, site: $site, action: "deploy", env: $env, branch: $branch, sha: $sha,
-      sha256: $sha256, artifact_url: $url, token: $token, ts: $ts}')
+      sha256: $sha256, artifact_url: $url, token: $token, workflow_url: $workflow_url, ts: $ts}')
   ;;
 teardown)
   body=$(jq -cn --arg id "$id" --arg site "$MUELLE_SITE" --arg branch "$branch" --argjson ts "$(date +%s)" \

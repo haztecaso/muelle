@@ -20,9 +20,39 @@ entries=$(
     done
   done | jq -s 'sort_by(.deployed_at) | reverse | sort_by(.site, (if .env == "next" then 0 else 1 end))'
 )
+workflows=$(
+  for st in "$STATE_DIR"/status/*.json; do
+    [[ -f $st ]] || continue
+    jq -c '
+      select(
+        .action == "deploy" and
+        (.state == "queued" or .state == "in_progress" or .state == "failure") and
+        (.site // "" | length) > 0 and
+        (.env // "" | length) > 0 and
+        (.branch // "" | length) > 0 and
+        (.sha // "" | length) > 0 and
+        (.repo // "" | length) > 0
+      ) |
+      {
+        id,
+        site,
+        env,
+        branch,
+        sha,
+        repo,
+        url,
+        workflow_url,
+        state,
+        message,
+        updated
+      }
+    ' "$st"
+  done | jq -s 'sort_by(.updated) | reverse'
+)
 
 tmp=$(mktemp "$out/.tmp.XXXXXX")
-jq '{generated: (now | todate), entries: .}' <<<"$entries" >"$tmp"
+jq -n --argjson entries "$entries" --argjson workflows "$workflows" \
+  '{generated: (now | todate), entries: $entries, workflows: $workflows}' >"$tmp"
 chmod 0644 "$tmp"
 mv -f "$tmp" "$out/index.json"
 
@@ -66,9 +96,22 @@ EOF
   jq -r '
     def h: tostring | @html;
     def a($href; $text): "<a href=\"\($href | h)\" target=\"_blank\" rel=\"noopener noreferrer\">\($text)</a>";
-    "<p class=\"meta\">\(length) deployment(s) &middot; generated \(now | todate)</p>",
-    (if length == 0 then "<p class=\"empty\">Nothing deployed to next or preview.</p>" else empty end),
-    (group_by(.site)[] |
+    "<p class=\"meta\">\(.entries | length) deployment(s) &middot; \(.workflows | length) in-progress/failed workflow(s) &middot; generated \(now | todate)</p>",
+    (if (.workflows | length) > 0 then
+      "<h2>deploy workflows</h2>",
+      "<table><tr><th>site</th><th>env</th><th>branch</th><th>commit</th><th>state</th><th class=\"when\">updated</th></tr>",
+      (.workflows[] |
+        "<tr><td>\(.site | h)</td>" +
+        "<td>\(if (.url // "") != "" then a(.url; "<span class=\"env\">\(.env | h)</span>") else "<span class=\"env\">\(.env | h)</span>" end)</td>" +
+        "<td>\(a("https://github.com/\(.repo)/tree/\(.branch)"; .branch | h))</td>" +
+        "<td>\(a("https://github.com/\(.repo)/commit/\(.sha)"; "<code>\(.sha[0:7] | h)</code>"))</td>" +
+        "<td>\(if (.workflow_url // "") != "" then a(.workflow_url; .state | h) else (.state | h) end)</td>" +
+        "<td class=\"when\">\(.updated | h)</td></tr>"
+      ),
+      "</table>"
+    else empty end),
+    (if (.entries | length) == 0 then "<p class=\"empty\">Nothing deployed to next or preview.</p>" else empty end),
+    (.entries | group_by(.site)[] |
       "<h2>\(.[0].site | h)\(a(.[0].prod; "prod"))</h2>",
       "<table><tr><th>env</th><th>branch</th><th>commit</th><th class=\"when\">deployed</th></tr>",
       (.[] |
@@ -77,7 +120,7 @@ EOF
         "<td>\(a("https://github.com/\(.repo)/commit/\(.sha)"; "<code>\(.sha[0:7] | h)</code>"))</td>" +
         "<td class=\"when\">\(.deployed_at | h)</td></tr>"),
       "</table>")
-  ' <<<"$entries"
+  ' <<<"$(jq -n --argjson entries "$entries" --argjson workflows "$workflows" '{entries: $entries, workflows: $workflows}')"
   printf '</main>\n</body>\n</html>\n'
 } >"$tmp"
 chmod 0644 "$tmp"

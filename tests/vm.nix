@@ -132,6 +132,15 @@
             time.sleep(1)
         raise Exception(f"timeout waiting for {id}")
 
+    def wait_index_workflow(id):
+        for _ in range(60):
+            idx = json.loads(machine.succeed(f"curl -skf {RESOLVE} -H 'X-Gate: open' https://muelle.test/index.json"))
+            for wf in idx.get("workflows", []):
+                if wf["id"] == id:
+                    return wf
+            time.sleep(1)
+        raise Exception(f"workflow {id} not found in index")
+
     def deploy(site, env, sha, name, branch="main", secret="deadbeef", **kw):
         path, digest = make_artifact(name, f"{env}-{sha[:7]}", **kw)
         return post(site, {
@@ -227,9 +236,16 @@
     with subtest("sha256 mismatch fails the deploy"):
         machine.succeed("echo junk > /srv/artifacts/repos/owner/demo/junk.zip")
         id, _ = post("demo", {"action": "deploy", "env": "next", "sha": SHA1, "sha256": "0" * 64,
-                               "artifact_url": "http://127.0.0.1:8080/repos/owner/demo/junk.zip"}, "deadbeef")
+                               "artifact_url": "http://127.0.0.1:8080/repos/owner/demo/junk.zip",
+                               "workflow_url": "https://github.com/owner/demo/actions/runs/123"}, "deadbeef")
+        wf = wait_index_workflow(id)
+        assert wf["site"] == "demo" and wf["env"] == "next", wf
+        assert wf["workflow_url"] == "https://github.com/owner/demo/actions/runs/123", wf
+        assert wf["state"] in ("queued", "in_progress", "failure"), wf
         s = wait_status(id, "failure")
         assert "sha256 mismatch" in s["message"], s
+        wf = wait_index_workflow(id)
+        assert wf["state"] == "failure", wf
 
     with subtest("symlinks in artifact are rejected"):
         machine.succeed("rm -rf /tmp/evil && mkdir /tmp/evil && ln -s /etc/passwd /tmp/evil/index.html")

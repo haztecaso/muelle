@@ -36,7 +36,10 @@ let
     coreutils
     jq
     util-linux
-  ] "MUELLE_WORKER=${worker}/bin/muelle-worker";
+  ] ''
+    MUELLE_WORKER=${worker}/bin/muelle-worker
+    MUELLE_INDEX=${index}/bin/muelle-index
+  '';
   worker = mk "muelle-worker" ./worker.sh [
     coreutils
     curl
