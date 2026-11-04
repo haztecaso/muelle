@@ -19,7 +19,7 @@ jobs:
       BRANCH: flake-update
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@v31
       - name: Update flake.lock
         run: nix flake update
