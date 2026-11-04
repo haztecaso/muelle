@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import pytest
 from helpers import make_zip, sha256
@@ -179,7 +180,7 @@ def test_run_without_deployments_skips_github(tmp_path: Path) -> None:
     http = FakeGitHubHttp((200, b"{}"), [{"state": "failure", "message": "boom"}])
     settings = github_settings(tmp_path, MUELLE_DEPLOYMENTS="false")
     assert client.run(settings, http=http, sleep=lambda _s: None) == 1
-    assert not any("api.github.com" in url for url, _ in http.calls)
+    assert not any(urlparse(url).netloc == "api.github.com" for url, _ in http.calls)
 
 
 # End to end over real HTTP: client -> fake host (HMAC check like webhook,
