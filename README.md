@@ -12,17 +12,26 @@ Status: prototype. Static sites only.
 
 **Documentation: <https://haztecaso.github.io/muelle/>**
 
-```
-GitHub Actions                         host
---------------                         ----
-build, upload-artifact
-POST /hooks/<site>  ── signed ──▶  webhook (HMAC check)
-                                     └─ muelle-receive: validate against Nix site table,
-                                        spool, detach worker, answer {id, url}
-                                   muelle-worker: download artifact (GITHUB_TOKEN),
-                                     check sha256, extract, flip `current`, prune
-GET /status/<id>    ◀── poll ────  status file
-set GitHub Deployment state
+```mermaid
+sequenceDiagram
+    participant CI as GitHub Actions
+    participant W as webhook (host)
+    participant R as muelle-receive
+    participant K as muelle-worker
+    CI->>CI: build, upload-artifact
+    CI->>W: POST /hooks/#lt;site#gt; (HMAC-signed)
+    W->>W: check HMAC
+    W->>R: payload
+    R->>R: validate against the Nix site table, spool
+    R-->>K: detach worker
+    R-->>CI: {id, url} (through webhook)
+    K->>K: download artifact (GITHUB_TOKEN), check sha256
+    K->>K: extract, flip current, prune
+    loop until success or failure
+        CI->>W: GET /status/#lt;id#gt;
+        W-->>CI: status file
+    end
+    CI->>CI: set GitHub Deployment state
 ```
 
 Each site gets `prod` (its own domain), `next` (`next-<site>.<domain>`) and a

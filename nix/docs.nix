@@ -58,6 +58,7 @@ pkgs.stdenvNoCC.mkDerivation {
 
   nativeBuildInputs = [
     pkgs.mdbook
+    pkgs.mdbook-mermaid
     python
   ];
 
@@ -72,6 +73,7 @@ pkgs.stdenvNoCC.mkDerivation {
       echo
       cat ${optionsDoc.optionsCommonMark}
     } > docs/src/reference/options.md
+    mdbook-mermaid install docs
     mdbook build docs --dest-dir "$out"
     runHook postBuild
   '';

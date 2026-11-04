@@ -1,16 +1,25 @@
 # Architecture
 
-```text
-GitHub Actions                         host
---------------                         ----
-build, upload-artifact
-POST /hooks/<site>  ── signed ──▶  webhook (HMAC check)
-                                     └─ muelle-receive: validate against Nix site table,
-                                        spool, detach worker, answer {id, url}
-                                   muelle-worker: download artifact (GITHUB_TOKEN),
-                                     check sha256, extract, flip `current`, prune
-GET /status/<id>    ◀── poll ────  status file
-set GitHub Deployment state
+```mermaid
+sequenceDiagram
+    participant CI as GitHub Actions
+    participant W as webhook (host)
+    participant R as muelle-receive
+    participant K as muelle-worker
+    CI->>CI: build, upload-artifact
+    CI->>W: POST /hooks/#lt;site#gt; (HMAC-signed)
+    W->>W: check HMAC
+    W->>R: payload
+    R->>R: validate against the Nix site table, spool
+    R-->>K: detach worker
+    R-->>CI: {id, url} (through webhook)
+    K->>K: download artifact (GITHUB_TOKEN), check sha256
+    K->>K: extract, flip current, prune
+    loop until success or failure
+        CI->>W: GET /status/#lt;id#gt;
+        W-->>CI: status file
+    end
+    CI->>CI: set GitHub Deployment state
 ```
 
 ## Pull, not push
@@ -35,7 +44,7 @@ payload only picks among them.
   the slot's `current` symlink, prunes old releases and previews, and keeps
   the status file updated.
 - Client ([`muelle.client`](../reference/python/client.md)): run by the
-  composite action; signs the payload, polls `/status/<id>` until the job
+  composite action; signs the payload, polls `/status/#lt;id#gt;` until the job
   ends, and reports GitHub Deployment state.
 - Listing ([`muelle.index`](../reference/python/index.md)): static
   `index.html` and `index.json`, regenerated on every hook request and daily.
