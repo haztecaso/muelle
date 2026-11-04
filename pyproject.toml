@@ -1,0 +1,44 @@
+[project]
+name = "muelle"
+version = "2.0.0"
+description = "Pull-based CI/CD for static sites on a NixOS host"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+muelle-client = "muelle.client:main"
+muelle-receive = "muelle.receive:main"
+muelle-worker = "muelle.worker:main"
+muelle-index = "muelle.index:main"
+
+[build-system]
+requires = ["uv_build>=0.10,<0.12"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0",
+    "ruff>=0.15",
+    "ty>=0.0.38",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PTH", "S"]
+ignore = [
+    "S310", # urlopen: schemes are validated by the receiver or set by the operator
+    "S603", # subprocess without shell
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+[tool.ty.environment]
+python-version = "3.14"

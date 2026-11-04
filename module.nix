@@ -13,7 +13,7 @@ let
     types
     ;
   cfg = config.services.muelle;
-  muelle = pkgs.callPackage ./scripts { };
+  muelle = pkgs.callPackage ./package.nix { };
 
   escapeRe = lib.replaceStrings [ "." "-" ] [ "\\." "\\-" ];
 

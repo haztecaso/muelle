@@ -51,6 +51,12 @@ outputs:
 runs:
   using: composite
   steps:
+    # update-environment: false leaves the caller's python on PATH untouched
+    - id: python
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.14"
+        update-environment: false
     - id: client
       shell: bash
       env:
@@ -67,4 +73,5 @@ runs:
         MUELLE_TOKEN: ${{ inputs.github-token }}
         MUELLE_DEPLOYMENTS: ${{ inputs.deployments }}
         GH_TOKEN: ${{ inputs.github-token }}
-      run: '"$GITHUB_ACTION_PATH/scripts/client.sh"'
+        PYTHON: ${{ steps.python.outputs.python-path }}
+      run: PYTHONPATH="$GITHUB_ACTION_PATH/src" "$PYTHON" -m muelle.client

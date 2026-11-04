@@ -15,24 +15,61 @@ concurrency:
 permissions:
   contents: read
 
+# Every job is independent: they all run in parallel.
 jobs:
-  lint:
+  actionlint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@v31
-      - name: actionlint
-        run: nix run nixpkgs#actionlint
-      - name: nixfmt
-        run: git ls-files -z '*.nix' | xargs -0 nix run nixpkgs#nixfmt -- --check
+      - run: nix run nixpkgs#actionlint
 
-  check:
+  nixfmt:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - run: git ls-files -z '*.nix' | xargs -0 nix run nixpkgs#nixfmt -- --check
+
+  python:
+    name: python (${{ matrix.check.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check:
+          - { name: ruff check, run: uv run ruff check --output-format github }
+          - { name: ruff format, run: uv run ruff format --check }
+          - { name: ty, run: uv run ty check --output-format github }
+          - { name: pytest, run: uv run pytest -v }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: ${{ matrix.check.run }}
+
+  nix:
+    name: nix (${{ matrix.check }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # package: build + pytest with nixpkgs' python; vm: NixOS integration test
+        check: [package, vm]
     steps:
       - uses: actions/checkout@v7
       # enable_kvm (default true) makes /dev/kvm usable for the NixOS VM test
       - uses: cachix/install-nix-action@v31
         with:
           extra_nix_config: system-features = nixos-test benchmark big-parallel kvm
-      - name: nix flake check
-        run: nix flake check -L
+      - run: nix build -L --no-link ".#checks.x86_64-linux.${{ matrix.check }}"
+
+  flake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      # evaluates every output on every system; the builds run in the nix job
+      - run: nix flake check --no-build --all-systems
