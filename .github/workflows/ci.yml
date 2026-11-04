@@ -15,16 +15,39 @@ concurrency:
 permissions:
   contents: read
 
+# Two jobs, named after the required checks on main. Each check is a step
+# that runs even when an earlier one failed (!cancelled()), so one run
+# reports every failure.
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@v31
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - id: sync
+        run: uv sync --locked
       - name: actionlint
+        if: ${{ !cancelled() }}
         run: nix run nixpkgs#actionlint
       - name: nixfmt
+        if: ${{ !cancelled() }}
         run: git ls-files -z '*.nix' | xargs -0 nix run nixpkgs#nixfmt -- --check
+      - name: flake evaluation
+        if: ${{ !cancelled() }}
+        # every output on every system; the builds run in the check job
+        run: nix flake check --no-build --all-systems
+      - name: ruff check
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run ruff check --output-format github
+      - name: ruff format
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run ruff format --check
+      - name: ty
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run ty check --output-format github
 
   check:
     runs-on: ubuntu-latest
@@ -34,5 +57,35 @@ jobs:
       - uses: cachix/install-nix-action@v31
         with:
           extra_nix_config: system-features = nixos-test benchmark big-parallel kvm
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - id: sync
+        run: uv sync --locked
+      - name: pytest
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run pytest -v
+      # The composite action on a real runner, against a closed port: python
+      # setup and module loading must work, and the request must fail cleanly.
+      - id: action
+        name: composite action (expected to fail)
+        if: ${{ !cancelled() }}
+        uses: ./
+        continue-on-error: true
+        with:
+          endpoint: http://127.0.0.1:9
+          site: demo
+          secret: dummy
+          action: teardown
+          deployments: "false"
+      - name: composite action reported the failure
+        if: ${{ !cancelled() }}
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          [[ $OUTCOME == failure ]]
+          [[ $(command -v python3) != "$RUNNER_TOOL_CACHE"/* ]] # caller's PATH untouched
       - name: nix flake check
+        if: ${{ !cancelled() }}
+        # package (unit tests with nixpkgs' python) and the NixOS VM test
         run: nix flake check -L

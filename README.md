@@ -138,9 +138,11 @@ on the next deploy; serve it from a separate path.
 ## GitHub Action
 
 muelle is a composite action: add it as a step after `actions/upload-artifact`.
-Its logic lives in [`scripts/client.sh`](scripts/client.sh), which the NixOS VM
-test runs against a real host, and which also works outside GitHub Actions
-(configured through `MUELLE_*` environment variables).
+Its logic lives in [`src/muelle/client.py`](src/muelle/client.py) (stdlib only,
+run on Python 3.14 from `actions/setup-python` without touching the job's
+`PATH`), which the NixOS VM test runs against a real host, and which also works
+outside GitHub Actions as `muelle-client` (configured through `MUELLE_*`
+environment variables; set `SSL_CERT_FILE` to trust a private CA).
 
 ```yaml
 name: deploy
@@ -261,14 +263,22 @@ mismatches as 500 too). `GET /status/<id>` returns
 
 ## Development
 
+Client, receiver, worker and index are one Python 3.14 package without
+runtime dependencies (`src/muelle`), managed with uv:
+
 ```sh
-nix build .#muelle          # scripts, shellchecked
-nix flake check             # includes a NixOS VM test of the full flow
+nix develop                 # uv + python 3.14 (or any uv install)
+uv run pytest               # unit tests (tests/unit)
+uv run ruff check && uv run ruff format --check
+uv run ty check
+nix build .#muelle          # package, runs the unit tests with nixpkgs' python
+nix flake check             # also the NixOS VM test of the full flow
 ```
 
-`main` is protected: changes land through pull requests once the `ci` checks
-(`lint`: actionlint + nixfmt; `check`: `nix flake check` with the VM test on a
-KVM-enabled runner) pass. Dependabot keeps action references current, and
+`main` is protected: changes land through pull requests once the two `ci`
+jobs pass: `lint` (actionlint, nixfmt, flake evaluation, ruff, ty) and `check`
+(pytest, a smoke test of the composite action, and `nix flake check` with the
+package and the NixOS VM test on a KVM-enabled runner). Dependabot keeps action references current, and
 `flake-update.yml` opens a weekly `flake.lock` PR that merges itself when ci
 passes. To release, tag a commit on `main` with `vX.Y.Z` and push the tag.
 
