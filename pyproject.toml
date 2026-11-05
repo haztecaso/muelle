@@ -17,6 +17,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.150",
     "pytest>=9.0",
     "pyyaml>=6.0.3",
     "ruff>=0.15",
@@ -24,7 +25,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/unit"]
+testpaths = ["tests/unit", "tests/property"]
 
 [tool.ruff]
 line-length = 120

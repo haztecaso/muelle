@@ -16,13 +16,19 @@ python314Packages.buildPythonApplication {
       ./pyproject.toml
       ./README.md
       ./src
+      ./tests/conftest.py
+      ./tests/helpers.py
       ./tests/unit
+      ./tests/property
     ];
   };
 
   build-system = [ python314Packages.uv-build ];
 
-  nativeCheckInputs = [ python314Packages.pytestCheckHook ];
+  nativeCheckInputs = with python314Packages; [
+    pytestCheckHook
+    hypothesis
+  ];
 
   pythonImportsCheck = [ "muelle" ];
 

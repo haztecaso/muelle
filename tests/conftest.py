@@ -1,8 +1,13 @@
 from pathlib import Path
 
 import pytest
+from hypothesis import settings
 
 from muelle.config import Config
+
+# tests that extract archives touch the disk: their timing varies too much for a deadline
+settings.register_profile("muelle", deadline=None)
+settings.load_profile("muelle")
 
 
 @pytest.fixture
