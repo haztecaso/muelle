@@ -73,7 +73,7 @@ jobs = st.lists(
             "site": st.sampled_from(["demo", "other"]),
             "env": st.sampled_from(["prod", "next", "preview"]),
             "branch": st.sampled_from(["main", "feat"]),
-            "action": st.sampled_from(["announce", "deploy", "abort"]),
+            "action": st.sampled_from(["announce", "abort", "deploy", "teardown"]),
             "created": st.sampled_from(["2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z"]),
             "updated": st.sampled_from(["2026-01-01T00:00:01Z", "2026-01-01T00:00:02Z"]),
         }
@@ -82,8 +82,10 @@ jobs = st.lists(
 )
 
 
-def _age(job: dict[str, Any]) -> tuple[str, bool, str]:
-    return job["created"], job["action"] != "announce", job["updated"]
+def _age(job: dict[str, Any]) -> tuple[str, int, str]:
+    """Within a second, a run goes announce, abort, then deploy or teardown."""
+    rank = {"announce": 0, "abort": 1}.get(job["action"], 2)
+    return job["created"], rank, job["updated"]
 
 
 @given(jobs=jobs, data=st.data())
