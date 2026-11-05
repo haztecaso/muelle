@@ -3,29 +3,11 @@ import json
 from typing import Any, Literal
 
 import pytest
+from helpers import NOW, SHA, deploy
 
 from muelle import protocol, receive
 from muelle.config import Config
 from muelle.receive import Rejected, field, validate
-
-NOW = 1_800_000_000
-SHA = "1" * 40
-
-
-def deploy(**overrides: Any) -> dict[str, Any]:
-    payload = protocol.deploy_payload(
-        id="test-0001",
-        site="demo",
-        env="next",
-        branch="main",
-        sha=SHA,
-        sha256="0" * 64,
-        artifact_url="https://api.github.com/repos/owner/demo/actions/artifacts/1/zip",
-        token="ghs_dummy",
-        ts=NOW,
-    )
-    payload.update(overrides)
-    return payload
 
 
 def rejected(payload: object, config: Config, site: str = "demo") -> str:

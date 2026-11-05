@@ -5,7 +5,7 @@ without runtime dependencies (`src/muelle`), managed with uv:
 
 ```sh
 nix develop                 # uv + python 3.14 (or any uv install)
-uv run pytest               # unit tests (tests/unit)
+uv run pytest               # unit and property tests (tests/unit, tests/property)
 uv run ruff check && uv run ruff format --check
 uv run ty check
 nix build .#muelle          # package, runs the unit tests with nixpkgs' python
