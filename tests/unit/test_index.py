@@ -2,6 +2,8 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from muelle import index
 from muelle.config import Config
 
@@ -132,6 +134,20 @@ def test_collect_jobs_newest_job_per_env_and_branch_wins(config: Config) -> None
     job(config, "deploy", "preview", "failure", at="2026-03-01T10:00:00Z", branch="feat/y")
     job(config, "announce", "preview", "queued", at="2026-03-01T11:30:00Z", branch="feat/y")
     assert shown(config) == [("preview", "feat/y", "queued")]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_latest_jobs_orders_jobs_of_the_same_second_by_action(reverse: bool) -> None:
+    # announce, abort and deploy of one run, all within a second: listed in either order
+    at = "2026-03-01T11:00:00Z"
+    jobs = [
+        {"site": "demo", "env": "preview", "branch": "feat/x", "action": action, "created": at, "updated": at}
+        for action in ("announce", "abort", "deploy")
+    ]
+    for n in range(1, 4):
+        given = jobs[:n][::-1] if reverse else jobs[:n]
+        [latest] = index.latest_jobs(given).values()
+        assert latest["action"] == jobs[n - 1]["action"]
 
 
 def test_collect_jobs_drops_old_and_foreign_jobs(config: Config) -> None:

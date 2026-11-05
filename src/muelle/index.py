@@ -61,12 +61,17 @@ def job_key(job: dict[str, Any]) -> tuple[str, str, str]:
     return str(job.get("site", "")), env, str(job.get("branch", "")) if env == "preview" else ""
 
 
+# Order of a run's jobs, for times within the same second: an abort is only
+# recorded over the announce of its run, and a deploy or teardown supersedes both.
+ACTION_ORDER = {"announce": 0, "abort": 1}
+
+
 def latest_jobs(jobs: Iterable[dict[str, Any]]) -> dict[tuple[str, str, str], dict[str, Any]]:
     """The newest job of each key. Times have one-second resolution: on a tie, an
-    announce is older than the deploy or abort that follows it."""
+    announce is older than the abort that fails it, and both are older than a deploy."""
 
-    def age(job: dict[str, Any]) -> tuple[str, bool, str]:
-        return str(job.get("created", "")), job.get("action") != "announce", str(job.get("updated", ""))
+    def age(job: dict[str, Any]) -> tuple[str, int, str]:
+        return str(job.get("created", "")), ACTION_ORDER.get(str(job.get("action")), 2), str(job.get("updated", ""))
 
     latest: dict[tuple[str, str, str], dict[str, Any]] = {}
     for job in sorted(jobs, key=age):
