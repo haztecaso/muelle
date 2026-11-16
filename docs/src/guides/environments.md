@@ -74,5 +74,7 @@ the branch itself (GitHub OIDC,
 - `muelle-prune.timer` removes previews daily (or on demand with
   `muelle prune`) once their last deploy is older than `previewTtlDays`
   (30, per site `sites.<name>.previewTtlDays`; null disables).
-- Deleting a branch removes its previews if the workflow has a teardown job,
-  as in [Your first workflow](../getting-started/first-workflow.md).
+- Deleting a branch removes its previews if the workflow has a teardown job
+  and a `concurrency` group shared with the branch's deploys, as in
+  [Your first workflow](../getting-started/first-workflow.md). Without the
+  group, a deploy still running at deletion recreates the preview.

@@ -69,6 +69,13 @@ on:
     branches: ["**"]
   delete:
 
+# one group per branch: deleting a branch cancels its running deploy, which
+# would otherwise recreate the preview after the teardown. On delete,
+# github.event.ref is the bare branch name, without refs/heads/.
+concurrency:
+  group: deploy-${{ github.event_name == 'delete' && format('refs/heads/{0}', github.event.ref) || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   deploy:
     if: github.event_name == 'push'
