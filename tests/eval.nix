@@ -19,7 +19,14 @@ let
           repo = "owner/demo";
           secretFile = "/run/secrets/demo";
           domain = "demo.test";
-          redirectFrom = [ "demo.test" ];
+          previewApex = "demo.test";
+        };
+        pub = {
+          repo = "owner/pub";
+          secretFile = "/run/secrets/pub";
+          domain = "pub.test";
+          previewApex = "pub.test";
+          publicPreviews = true;
         };
         prodonly = {
           repo = "owner/prodonly";
@@ -54,9 +61,13 @@ let
   # vhosts declared by muelle for the default config
   muelleVhosts =
     c:
-    lib.attrVals [ "muelle.test" "demo.test" "muelle-preview-demo" "muelle-redirect-demo-demo.test" ] (
-      vhosts c
-    );
+    lib.attrVals [
+      "muelle.test"
+      "demo.test"
+      "muelle-preview-demo"
+      "muelle-apex-demo"
+      "muelle-apex-pub"
+    ] (vhosts c);
 
   tests = {
     testAssertionsPass = {
@@ -115,6 +126,34 @@ let
       };
       expected = [ "services.muelle.sites: two sites share the same domain" ];
     };
+    testPreviewApexAssertions = {
+      expr = failedAssertions {
+        services.muelle.sites = lib.mkForce {
+          a = {
+            repo = "o/a";
+            secretFile = "/s";
+            prodUrl = "https://a";
+            previewApex = "same.test";
+          };
+          b = {
+            repo = "o/b";
+            secretFile = "/s";
+            prodUrl = "https://b";
+            previewApex = "same.test";
+          };
+          c = {
+            repo = "o/c";
+            secretFile = "/s";
+            prodUrl = "https://c";
+            publicPreviews = true;
+          };
+        };
+      };
+      expected = [
+        "services.muelle.sites: two sites share the same previewApex"
+        "services.muelle.sites.c: publicPreviews needs previewApex"
+      ];
+    };
 
     testSettings = {
       expr = default.services.muelle.settings.sites;
@@ -127,6 +166,7 @@ let
             "preview"
           ];
           prod_url = "https://demo.test";
+          public_apex = null;
           preview_ttl_days = 30;
           prod_branches = [ "main" ];
           artifact_url_prefix = "https://api.github.com/repos/owner/demo/";
@@ -135,9 +175,23 @@ let
           repo = "owner/prodonly";
           envs = [ "prod" ];
           prod_url = "https://prodonly.test";
+          public_apex = null;
           preview_ttl_days = 30;
           prod_branches = null;
           artifact_url_prefix = "https://api.github.com/repos/owner/prodonly/";
+        };
+        pub = {
+          repo = "owner/pub";
+          envs = [
+            "prod"
+            "next"
+            "preview"
+          ];
+          prod_url = "https://pub.test";
+          public_apex = "pub.test";
+          preview_ttl_days = 30;
+          prod_branches = [ "main" ];
+          artifact_url_prefix = "https://api.github.com/repos/owner/pub/";
         };
       };
     };
@@ -153,9 +207,12 @@ let
       expr = lib.filter (n: n != "localhost") (lib.attrNames (vhosts default));
       expected = [
         "demo.test"
+        "muelle-apex-demo"
+        "muelle-apex-pub"
         "muelle-preview-demo"
-        "muelle-redirect-demo-demo.test"
+        "muelle-preview-pub"
         "muelle.test"
+        "pub.test"
       ];
     };
     testProdVhost = {
@@ -179,9 +236,46 @@ let
       };
     };
     testRedirectVhost = {
-      expr = (vhosts default)."muelle-redirect-demo-demo.test".locations."/".return;
-      expected = "302 https://$muelle_slot-demo.muelle.test$request_uri";
+      expr = {
+        inherit ((vhosts default)."muelle-apex-demo") serverName root useACMEHost;
+        return = (vhosts default)."muelle-apex-demo".locations."/".return;
+      };
+      expected = {
+        serverName = ''"~^(?<muelle_slot>next|[0-9a-f]{8})\.demo\.test$"'';
+        root = null;
+        useACMEHost = "demo.test";
+        return = "302 https://$muelle_slot-demo.muelle.test$request_uri";
+      };
     };
+    # served on the apex, and the gate of previewVhost stays off it
+    testPublicVhost =
+      let
+        v = vhosts (eval {
+          services.muelle.previewVhost.basicAuthFile = "/run/htpasswd";
+        });
+      in
+      {
+        expr = {
+          inherit (v."muelle-apex-pub")
+            serverName
+            root
+            useACMEHost
+            basicAuthFile
+            ;
+          locations = lib.attrNames v."muelle-apex-pub".locations;
+          noindex = lib.hasInfix "X-Robots-Tag" v."muelle-apex-pub".extraConfig;
+          gated = v."muelle-preview-pub".basicAuthFile;
+        };
+        expected = {
+          serverName = ''"~^(?<muelle_slot>next|[0-9a-f]{8})\.pub\.test$"'';
+          root = "/var/www/muelle/pub/$muelle_slot/current";
+          useACMEHost = "pub.test";
+          basicAuthFile = null;
+          locations = [ ];
+          noindex = true;
+          gated = "/run/htpasswd";
+        };
+      };
 
     # previewVhost, sites.<name>.previewVhost and indexVhost deep-merge
     # with each other and with muelle's own definitions
@@ -257,6 +351,7 @@ let
         true
         true
         true
+        true
       ];
     };
     testSecurityHeadersOff = {
@@ -266,6 +361,7 @@ let
         })
       );
       expected = [
+        false
         false
         false
         false

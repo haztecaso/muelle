@@ -43,6 +43,7 @@ in
         sites = lib.mapAttrs (_: s: {
           inherit (s) envs repo;
           prod_url = s.prodUrl;
+          public_apex = s.publicApex;
           preview_ttl_days = s.previewTtlDays;
           prod_branches = s.prodBranches;
           artifact_url_prefix = "${cfg.artifactUrlBase}/${s.repo}/";

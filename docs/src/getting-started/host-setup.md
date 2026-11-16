@@ -28,7 +28,8 @@ Then declare the muelle domain and your sites:
       extraConfig = ''
         error_page 404 /404.html;
       '';
-      redirectFrom = [ "mysite.example.org" ];
+      previewApex = "mysite.example.org"; # next.<apex>, <hash>.<apex> 302 to the gated previews
+      # publicPreviews = true;             # or serve them there, ungated
     };
   };
 

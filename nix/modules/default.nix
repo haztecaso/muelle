@@ -2,7 +2,7 @@
 #
 #   core/    user, directories, config JSON, admin CLI, webhook and prune units
 #   nginx/   the muelle domain vhost (hooks, status, listing), shared headers
-#   static/  static sites: prod, next/preview and redirect vhosts
+#   static/  static sites: prod, next/preview and preview apex vhosts
 {
   lib,
   pkgs,

@@ -3,6 +3,15 @@
 Changes to the host configuration needed when updating the flake input.
 Releases not listed need none.
 
+## v2.2.0 to v3.0.0
+
+- `sites.<name>.redirectFrom` is replaced by `sites.<name>.previewApex`, a
+  single apex, with no alias: evaluation fails until it is renamed.
+  `redirectFrom = [ "example.com" ]` becomes `previewApex = "example.com"`.
+  Its vhost is now named `muelle-apex-<site>`.
+- `sites.<name>.publicPreviews` serves next and previews on `previewApex`
+  without the gate (see [Gating previews](previews.md#public-previews)).
+
 ## v2.0.0 to v2.2.0
 
 - `services.muelle.previewVhostDefaults` is renamed to
