@@ -3,6 +3,12 @@
 Changes to the host configuration needed when updating the flake input.
 Releases not listed need none.
 
+## v3.0.0 to v3.1.0
+
+- Nothing required. `sites.<name>.publicPreviewVhost` is new: settings
+  added straight to `services.nginx.virtualHosts.muelle-apex-<site>` for
+  public previews can move there.
+
 ## v2.2.0 to v3.0.0
 
 - `sites.<name>.redirectFrom` is replaced by `sites.<name>.previewApex`, a

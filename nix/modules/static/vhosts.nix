@@ -55,32 +55,41 @@ let
     })
   ) (lib.filterAttrs (_: s: lib.any (e: e != "prod") s.envs) cfg.sites);
 
-  # unlike the preview vhost, never merges previewVhost: public means ungated
+  # unlike the preview vhost, never merges previewVhost: public means ungated.
+  # Public ones merge the site's publicPreviewVhost instead.
   apexVhosts = lib.mapAttrs' (
     name: s:
-    lib.nameValuePair "muelle-apex-${name}" (
-      {
-        serverName = "\"~^(?<muelle_slot>next|[0-9a-f]{8})\\.${escapeRe s.previewApex}$\"";
-        useACMEHost = s.previewApex;
-        forceSSL = true;
-      }
-      // (
+    # a function, so `imports` is not read as a vhost option
+    lib.nameValuePair "muelle-apex-${name}" (_: {
+      imports = [
+        {
+          serverName = "\"~^(?<muelle_slot>next|[0-9a-f]{8})\\.${escapeRe s.previewApex}$\"";
+          useACMEHost = s.previewApex;
+          forceSSL = true;
+        }
+      ]
+      ++ (
         if s.publicPreviews then
-          {
-            root = "${cfg.baseDir}/${name}/$muelle_slot/current";
-            extraConfig = ''
-              add_header X-Robots-Tag "noindex, nofollow" always;
-              try_files $uri $uri.html $uri/ =404;
-            ''
-            + s.securityHeaders;
-          }
+          [
+            {
+              root = "${cfg.baseDir}/${name}/$muelle_slot/current";
+              extraConfig = ''
+                add_header X-Robots-Tag "noindex, nofollow" always;
+                try_files $uri $uri.html $uri/ =404;
+              ''
+              + s.securityHeaders;
+            }
+            s.publicPreviewVhost
+          ]
         else
-          {
-            locations."/".return = "302 https://$muelle_slot-${name}.${cfg.domain}$request_uri";
-            extraConfig = s.securityHeaders;
-          }
-      )
-    )
+          [
+            {
+              locations."/".return = "302 https://$muelle_slot-${name}.${cfg.domain}$request_uri";
+              extraConfig = s.securityHeaders;
+            }
+          ]
+      );
+    })
   ) (lib.filterAttrs (_: s: s.previewApex != null) cfg.sites);
 in
 {
