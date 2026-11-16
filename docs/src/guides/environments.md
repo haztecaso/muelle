@@ -37,6 +37,22 @@ prod: read [Gating previews](previews.md#public-previews) first.
 
 `previewApex` needs an ACME cert of the same name covering `*.<apex>`.
 
+## Caching hashed assets
+
+Build tools put a content hash in the names of their assets (Astro under
+`/_astro/`, Vite under `/assets/`): a changed file gets a new URL. List
+those prefixes in `immutablePaths` and prod, next and previews send them
+with `Cache-Control: public, max-age=31536000, immutable`, so browsers keep
+them a year without revalidating:
+
+```nix
+services.muelle.sites.mysite.immutablePaths = [ "/_astro/" ];
+```
+
+Everything else keeps nginx's `ETag` and `Last-Modified` revalidation, and a
+404 under those prefixes is not cached. Never list a path whose files
+change in place.
+
 ## Branch policy
 
 Only the branches in `prodBranches` (default `[ "main" ]`) may deploy to

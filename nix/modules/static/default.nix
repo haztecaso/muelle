@@ -53,11 +53,38 @@ let
             [Gating previews](../guides/previews.md). `<slot>-<site>.<domain>` stays as it is.
           '';
         };
+        headers = mkOption {
+          type = types.attrsOf (types.nullOr types.str);
+          default = { };
+          example = {
+            X-Frame-Options = null;
+            Content-Security-Policy = "frame-ancestors https://partner.example";
+          };
+          description = ''
+            Response headers of this site's prod, next/preview and apex vhosts,
+            merged header by header over `services.muelle.headers`; `null` drops one.
+          '';
+        };
         securityHeaders = mkOption {
-          type = types.lines;
-          default = cfg.securityHeaders;
-          defaultText = lib.literalExpression "config.services.muelle.securityHeaders";
-          description = "`add_header` directives of this site's prod, next/preview and redirect vhosts.";
+          type = types.nullOr types.lines;
+          default = null;
+          description = ''
+            Deprecated, use `headers`. When set, these nginx `add_header`
+            directives replace this site's headers, as before 3.2.0.
+          '';
+        };
+        immutablePaths = mkOption {
+          type = types.listOf (types.strMatching "/.*");
+          default = [ ];
+          example = [ "/_astro/" ];
+          description = ''
+            URL path prefixes whose files never change, because their names
+            carry a content hash (e.g. Astro's `/_astro/`, Vite's `/assets/`).
+            They are sent with `Cache-Control: public, max-age=31536000,
+            immutable` on prod, next and previews, so browsers keep them a
+            year without revalidating. Never list paths whose files change in
+            place: browsers would keep stale copies.
+          '';
         };
         previewVhost = mkOption {
           type = types.deferredModule;
@@ -110,6 +137,15 @@ in
   };
 
   config = mkIf cfg.enable {
+    warnings = lib.concatLists (
+      lib.mapAttrsToList (
+        name: s:
+        lib.optional (s.securityHeaders != null) ''
+          services.muelle.sites.${name}.securityHeaders is deprecated: set
+          services.muelle.sites.${name}.headers (name = value; null drops one) instead.
+        ''
+      ) cfg.sites
+    );
     assertions = [
       {
         assertion = lib.allUnique (
