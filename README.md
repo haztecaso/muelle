@@ -86,7 +86,7 @@ jobs:
           name: site
           path: dist
           retention-days: 1
-      - uses: haztecaso/muelle@<sha> # v2.2.0
+      - uses: haztecaso/muelle@<sha> # v3.0.0
         with:
           endpoint: https://muelle.example.com
           site: mysite
@@ -101,7 +101,7 @@ jobs:
     permissions:
       deployments: write
     steps:
-      - uses: haztecaso/muelle@<sha> # v2.2.0
+      - uses: haztecaso/muelle@<sha> # v3.0.0
         with:
           endpoint: https://muelle.example.com
           site: mysite
@@ -109,7 +109,7 @@ jobs:
           action: teardown
 ```
 
-Pin the action by commit SHA (`git ls-remote https://github.com/haztecaso/muelle 'refs/tags/v2.2.0^{}'`):
+Pin the action by commit SHA (`git ls-remote https://github.com/haztecaso/muelle 'refs/tags/v3.0.0^{}'`):
 it is handed your secret.
 
 ## Learn more

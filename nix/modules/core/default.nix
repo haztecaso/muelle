@@ -59,6 +59,12 @@ let
         defaultText = lib.literalExpression ''"https://''${domain}" if domain is set'';
         description = "Public URL of the prod environment, reported back to CI.";
       };
+      publicApex = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        internal = true;
+        description = "Apex of the next/preview URLs reported back to CI (`<slot>.<apex>`). Null: `<slot>-<site>.<domain>`. Set by `publicPreviews`.";
+      };
       previewTtlDays = mkOption {
         type = types.nullOr types.ints.positive;
         default = cfg.previewTtlDays;

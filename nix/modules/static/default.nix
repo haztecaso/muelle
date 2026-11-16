@@ -34,13 +34,23 @@ let
           default = "";
           description = "Extra nginx config for the prod vhost's server block.";
         };
-        redirectFrom = mkOption {
-          type = types.listOf types.str;
-          default = [ ];
-          example = [ "example.com" ];
+        previewApex = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          example = "example.com";
           description = ''
-            Apex domains whose `next.<apex>` and `<hash>.<apex>` subdomains 302 to the
-            `<slot>-<site>.<domain>`. Each apex needs an ACME cert of the same name covering `*.<apex>`.
+            Apex domain whose `next.<apex>` and `<hash>.<apex>` subdomains expose this
+            site's next/preview slots: a 302 to `<slot>-<site>.<domain>`, or the slot
+            itself with `publicPreviews`. Needs an ACME cert of the same name covering `*.<apex>`.
+          '';
+        };
+        publicPreviews = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            Serve next/previews on `previewApex` without `previewVhost` (no gate) and
+            report their URLs there. Their content then shares a site with prod: see
+            [Gating previews](../guides/previews.md). `<slot>-<site>.<domain>` stays as it is.
           '';
         };
         securityHeaders = mkOption {
@@ -66,7 +76,10 @@ let
           description = "Document root of the prod environment (a symlink flipped on deploy). Use it in your own vhost if `domain` is unset.";
         };
       };
-      config.prodUrl = mkIf (config.domain != null) (lib.mkDefault "https://${config.domain}");
+      config = {
+        prodUrl = mkIf (config.domain != null) (lib.mkDefault "https://${config.domain}");
+        publicApex = mkIf config.publicPreviews config.previewApex;
+      };
     };
 in
 {
@@ -93,6 +106,16 @@ in
         );
         message = "services.muelle.sites: two sites share the same domain";
       }
-    ];
+      {
+        assertion = lib.allUnique (
+          lib.filter (d: d != null) (lib.mapAttrsToList (_: s: s.previewApex) cfg.sites)
+        );
+        message = "services.muelle.sites: two sites share the same previewApex";
+      }
+    ]
+    ++ lib.mapAttrsToList (name: s: {
+      assertion = s.publicPreviews -> s.previewApex != null;
+      message = "services.muelle.sites.${name}: publicPreviews needs previewApex";
+    }) cfg.sites;
   };
 }

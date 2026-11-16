@@ -17,6 +17,7 @@
           "*.muelle.test"
         ];
         certs."demo.test".extraDomainNames = [ "*.demo.test" ];
+        certs."pub.test".extraDomainNames = [ "*.pub.test" ];
       };
       users.users.nginx.extraGroups = [ "acme" ];
       # muelle-client (python) resolves and verifies TLS like on a runner
@@ -24,6 +25,7 @@
 
       environment.etc."muelle-demo".text = "deadbeef";
       environment.etc."muelle-prodonly".text = "cafebabe";
+      environment.etc."muelle-pub".text = "f00dface";
       environment.systemPackages = with pkgs; [
         (callPackage ../package.nix { })
         jq
@@ -73,7 +75,20 @@
           secretFile = "/etc/muelle-demo";
           domain = "demo.test";
           extraConfig = "add_header X-Demo yes always;";
-          redirectFrom = [ "demo.test" ];
+          previewApex = "demo.test";
+        };
+        sites.pub = {
+          repo = "owner/pub";
+          secretFile = "/etc/muelle-pub";
+          domain = "pub.test";
+          previewApex = "pub.test";
+          publicPreviews = true;
+          # stand-in for an auth gate: public previews must not go through it
+          previewVhost.locations."/".extraConfig = ''
+            if ($http_x_gate != "open") {
+              return 401;
+            }
+          '';
         };
         sites.prodonly = {
           repo = "owner/prodonly";
@@ -85,7 +100,7 @@
     };
 
   testScript = ''
-    import json, time
+    import json, re, time
 
     machine.wait_for_unit("nginx.service")
     machine.wait_for_unit("webhook.service")
@@ -93,13 +108,14 @@
     machine.wait_for_open_port(9077)
 
     RESOLVE = " ".join(f"--resolve {h}:443:127.0.0.1" for h in
-      ["muelle.test", "demo.test", "next.demo.test", "next-demo.muelle.test", "prod-demo.muelle.test"])
+      ["muelle.test", "demo.test", "next.demo.test", "next-demo.muelle.test", "prod-demo.muelle.test",
+       "next.pub.test", "next-pub.muelle.test", "prod.pub.test"])
     counter = [0]
 
-    def make_artifact(name, content, kind="zip"):
+    def make_artifact(name, content, kind="zip", site="demo"):
         machine.succeed(f"rm -rf /tmp/build && mkdir -p /tmp/build/dist && echo '{content}' > /tmp/build/dist/index.html")
-        machine.succeed("mkdir -p /srv/artifacts/repos/owner/demo /srv/artifacts/repos/owner/prodonly")
-        path = f"/srv/artifacts/repos/owner/demo/{name}"
+        machine.succeed("mkdir -p /srv/artifacts/repos/owner/demo /srv/artifacts/repos/owner/prodonly /srv/artifacts/repos/owner/pub")
+        path = f"/srv/artifacts/repos/owner/{site}/{name}"
         if kind == "zip":
             machine.succeed(f"cd /tmp/build && zip -qr {path} dist")
         else:
@@ -135,7 +151,7 @@
         raise Exception(f"timeout waiting for {id}")
 
     def deploy(site, env, sha, name, branch="main", secret="deadbeef", **kw):
-        path, digest = make_artifact(name, f"{env}-{sha[:7]}", **kw)
+        path, digest = make_artifact(name, f"{env}-{sha[:7]}", site=site, **kw)
         return post(site, {
             "action": "deploy", "env": env, "sha": sha, "branch": branch,
             "artifact_url": f"http://127.0.0.1:8080/repos/owner/{site}/{name}",
@@ -209,6 +225,25 @@
         machine.succeed(f"curl -sk --resolve {host}:443:127.0.0.1 -o /dev/null -w '%{{http_code}}' {url}/ | grep 404")
         page = machine.succeed(f"curl -skf {RESOLVE} -H 'X-Gate: open' https://muelle.test/")
         assert url not in page and "next-demo.muelle.test" in page, page
+
+    with subtest("public previews on the apex"):
+        id, _ = deploy("pub", "next", SHA1, "p1.zip", secret="f00dface")
+        assert wait_status(id)["url"] == "https://next.pub.test"
+        machine.succeed(f"curl -skf {RESOLVE} https://next.pub.test/ | grep next-1111111")
+        h = machine.succeed(f"curl -skI {RESOLVE} https://next.pub.test/").lower()
+        assert "x-robots-tag: noindex, nofollow" in h and "strict-transport-security" in h, h
+        # the muelle domain vhost keeps its gate
+        code = machine.succeed(f"curl -sk {RESOLVE} -o /dev/null -w '%{{http_code}}' https://next-pub.muelle.test/")
+        assert code == "401", code
+        machine.fail(f"curl -skf {RESOLVE} https://prod.pub.test/")
+        id, resp = deploy("pub", "preview", SHA2, "p2.zip", branch="feat/p", secret="f00dface")
+        url = json.loads(resp)["url"]
+        assert re.fullmatch(r"https://[0-9a-f]{8}\.pub\.test", url), url
+        wait_status(id)
+        host = url.removeprefix("https://")
+        machine.succeed(f"curl -skf --resolve {host}:443:127.0.0.1 {url}/ | grep preview-2222222")
+        idx = json.loads(machine.succeed(f"curl -skf {RESOLVE} -H 'X-Gate: open' https://muelle.test/index.json"))
+        assert {e["url"] for e in idx["entries"] if e["site"] == "pub"} == {"https://next.pub.test", url}, idx
 
     # webhook answers an HMAC mismatch with 500 "Error occurred while evaluating hook rules."
     with subtest("bad signature is rejected"):
