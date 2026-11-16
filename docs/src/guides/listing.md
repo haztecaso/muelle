@@ -40,7 +40,7 @@ jobs:
     env:
       ENVIRONMENT: ${{ github.ref_name == 'main' && 'prod' || github.ref_name == 'next' && 'next' || 'preview' }}
     steps:
-      - uses: haztecaso/muelle@<sha> # v2.2.0
+      - uses: haztecaso/muelle@<sha> # v3.0.0
         with:
           endpoint: https://muelle.example.com
           site: mysite
@@ -55,7 +55,7 @@ jobs:
           name: site
           path: dist
           retention-days: 1
-      - uses: haztecaso/muelle@<sha> # v2.2.0
+      - uses: haztecaso/muelle@<sha> # v3.0.0
         with:
           endpoint: https://muelle.example.com
           site: mysite
@@ -64,7 +64,7 @@ jobs:
           artifact-id: ${{ steps.upload.outputs.artifact-id }}
           artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
       - if: failure() || cancelled()
-        uses: haztecaso/muelle@<sha> # v2.2.0
+        uses: haztecaso/muelle@<sha> # v3.0.0
         with:
           endpoint: https://muelle.example.com
           site: mysite

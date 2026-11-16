@@ -3,7 +3,7 @@
 Changes to the host configuration needed when updating the flake input.
 Releases not listed need none.
 
-## v2.2.0 to the next release
+## v2.2.0 to v3.0.0
 
 - `sites.<name>.redirectFrom` is replaced by `sites.<name>.previewApex`, a
   single apex, with no alias: evaluation fails until it is renamed.
