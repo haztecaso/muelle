@@ -277,6 +277,54 @@ let
         };
       };
 
+    # publicPreviewVhost reaches the public apex vhost and nothing else
+    testPublicPreviewVhost =
+      let
+        # replaces the default sites, so both are spelled out
+        v = vhosts (eval {
+          services.muelle.sites = {
+            pub = {
+              repo = "owner/pub";
+              secretFile = "/run/secrets/pub";
+              domain = "pub.test";
+              previewApex = "pub.test";
+              publicPreviews = true;
+              publicPreviewVhost = {
+                extraConfig = "error_page 404 /404.html;";
+                locations."/x".return = "200 x";
+              };
+            };
+            demo = {
+              repo = "owner/demo";
+              secretFile = "/run/secrets/demo";
+              domain = "demo.test";
+              previewApex = "demo.test";
+              publicPreviewVhost.extraConfig = "error_page 404 /404.html;";
+            };
+          };
+        });
+        has404 = name: lib.hasInfix "error_page 404" v.${name}.extraConfig;
+      in
+      {
+        expr = {
+          pub = has404 "muelle-apex-pub";
+          pubKeepsOwn = lib.hasInfix "X-Robots-Tag" v."muelle-apex-pub".extraConfig;
+          pubLocations = lib.attrNames v."muelle-apex-pub".locations;
+          pubPreview = has404 "muelle-preview-pub";
+          # demo's apex only redirects: not public, so not merged
+          demo = has404 "muelle-apex-demo";
+          demoProd = has404 "demo.test";
+        };
+        expected = {
+          pub = true;
+          pubKeepsOwn = true;
+          pubLocations = [ "/x" ];
+          pubPreview = false;
+          demo = false;
+          demoProd = false;
+        };
+      };
+
     # previewVhost, sites.<name>.previewVhost and indexVhost deep-merge
     # with each other and with muelle's own definitions
     testVhostMerge =

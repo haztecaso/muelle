@@ -68,6 +68,17 @@ let
             site's next/preview vhost, after `services.muelle.previewVhost`.
           '';
         };
+        publicPreviewVhost = mkOption {
+          type = types.deferredModule;
+          default = { };
+          example = lib.literalExpression ''{ extraConfig = "error_page 404 /404.html;"; }'';
+          description = ''
+            A `services.nginx.virtualHosts.<name>` module merged into this
+            site's public next/preview vhost on `previewApex` (only with
+            `publicPreviews`). Neither `previewVhost` is merged there, so
+            this is the place for the site's own settings, such as error pages.
+          '';
+        };
         root = mkOption {
           type = types.str;
           readOnly = true;

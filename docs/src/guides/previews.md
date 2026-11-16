@@ -52,6 +52,17 @@ hash is not. They are sent with `X-Robots-Tag: noindex, nofollow`.
 
 The listing stays behind `previewVhost` and `indexVhost`.
 
+Since `previewVhost` is not merged there, the site's own nginx settings for
+these vhosts go in `publicPreviewVhost`, for example its 404 page:
+
+```nix
+services.muelle.sites.mysite = {
+  extraConfig = "error_page 404 /404.html;";                   # prod
+  previewVhost.extraConfig = "error_page 404 /404.html;";      # <slot>-mysite.<domain>
+  publicPreviewVhost.extraConfig = "error_page 404 /404.html;"; # next/<hash>.<previewApex>
+};
+```
+
 A Content-Security-Policy for prod, next and previews is the site's
 business; muelle only sets one on the listing and `/status/` (see
 [Security model](../explanation/security.md#headers)).
