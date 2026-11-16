@@ -1,7 +1,8 @@
 # nginx vhosts of static sites:
 #   prod      <domain>                     rooted at <baseDir>/<site>/prod/current
 #   preview   <slot>-<site>.<muelle domain> one regex vhost per site for next and previews
-#   redirect  {next,<hash>}.<apex>          302 to the preview vhost
+#   apex      {next,<hash>}.<previewApex>   302 to the preview vhost, or with
+#                                          publicPreviews the slot itself, ungated
 {
   config,
   lib,
@@ -54,30 +55,40 @@ let
     })
   ) (lib.filterAttrs (_: s: lib.any (e: e != "prod") s.envs) cfg.sites);
 
-  redirectVhosts = lib.listToAttrs (
-    lib.concatLists (
-      lib.mapAttrsToList (
-        name: s:
-        map (
-          apex:
-          lib.nameValuePair "muelle-redirect-${name}-${apex}" {
-            serverName = "\"~^(?<muelle_slot>next|[0-9a-f]{8})\\.${escapeRe apex}$\"";
-            useACMEHost = apex;
-            forceSSL = true;
+  # unlike the preview vhost, never merges previewVhost: public means ungated
+  apexVhosts = lib.mapAttrs' (
+    name: s:
+    lib.nameValuePair "muelle-apex-${name}" (
+      {
+        serverName = "\"~^(?<muelle_slot>next|[0-9a-f]{8})\\.${escapeRe s.previewApex}$\"";
+        useACMEHost = s.previewApex;
+        forceSSL = true;
+      }
+      // (
+        if s.publicPreviews then
+          {
+            root = "${cfg.baseDir}/${name}/$muelle_slot/current";
+            extraConfig = ''
+              add_header X-Robots-Tag "noindex, nofollow" always;
+              try_files $uri $uri.html $uri/ =404;
+            ''
+            + s.securityHeaders;
+          }
+        else
+          {
             locations."/".return = "302 https://$muelle_slot-${name}.${cfg.domain}$request_uri";
             extraConfig = s.securityHeaders;
           }
-        ) s.redirectFrom
-      ) cfg.sites
+      )
     )
-  );
+  ) (lib.filterAttrs (_: s: s.previewApex != null) cfg.sites);
 in
 {
   config = mkIf cfg.enable {
     services.nginx.virtualHosts = lib.mkMerge [
       prodVhosts
       previewVhosts
-      redirectVhosts
+      apexVhosts
     ];
   };
 }

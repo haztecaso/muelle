@@ -23,11 +23,19 @@ On disk, each environment is a slot:
 deploy flips atomically. Slots are `prod`, `next`, and an 8-hex hash of
 site + branch + sha per preview.
 
-## Redirects
+## Under the site's own domain
 
-With `redirectFrom = [ "example.com" ]`, `next.example.com` and
+With `previewApex = "example.com"`, `next.example.com` and
 `<hash>.example.com` 302 to `<slot>-<site>.<domain>`, so previews can be
-reached under the site's own domain.
+reached under the site's own domain, behind the same gate.
+
+Add `publicPreviews = true` to serve them there instead, without
+`previewVhost`: `next.example.com` and `<hash>.example.com` are public, and
+CI, the listing and the admin CLI report those URLs.
+`<slot>-<site>.<domain>` keeps its gate. Previews then share a site with
+prod: read [Gating previews](previews.md#public-previews) first.
+
+`previewApex` needs an ACME cert of the same name covering `*.<apex>`.
 
 ## Branch policy
 

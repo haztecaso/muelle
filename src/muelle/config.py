@@ -22,6 +22,8 @@ class Site:
     envs: tuple[str, ...]
     artifact_url_prefix: str
     preview_ttl_days: int | None = None
+    # next/previews reported at <slot>.<public_apex> instead of <slot>-<site>.<domain>
+    public_apex: str | None = None
     # None: any branch may deploy to prod
     prod_branches: tuple[str, ...] | None = ("main",)
 
@@ -61,8 +63,11 @@ class Config:
         return StateDir(self.state_dir)
 
     def url_for(self, site: str, slot: str) -> str:
+        s = self.sites[site]
         if slot == "prod":
-            return self.sites[site].prod_url
+            return s.prod_url
+        if s.public_apex:
+            return f"https://{slot}.{s.public_apex}"
         return f"https://{slot}-{site}.{self.domain}"
 
     def slot_url(self, site: str, env: str, branch: str, sha: str) -> str:

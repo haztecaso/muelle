@@ -38,6 +38,20 @@ So:
   and Netlify do with their public-suffix domains), so previews cannot reach
   cookies or same-site requests of your other hosts.
 
+## Public previews
+
+`publicPreviews = true` serves a site's next and previews on
+`next.<previewApex>` and `<hash>.<previewApex>`, without `previewVhost`
+(see [Environments and URLs](environments.md#under-the-sites-own-domain)).
+Anyone with the URL can open them, and their content shares a site with
+prod: a preview's JavaScript can set cookies for `.<previewApex>` and make
+same-site requests to prod. Turn it on only when every branch that deploys
+comes from people you trust and prod keeps no session or cookies a
+preview could abuse. `next.<previewApex>` is easy to guess; a preview's
+hash is not. They are sent with `X-Robots-Tag: noindex, nofollow`.
+
+The listing stays behind `previewVhost` and `indexVhost`.
+
 A Content-Security-Policy for prod, next and previews is the site's
 business; muelle only sets one on the listing and `/status/` (see
 [Security model](../explanation/security.md#headers)).

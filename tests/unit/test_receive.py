@@ -38,6 +38,15 @@ def test_preview_url_uses_slot(config: Config) -> None:
     assert url == f"https://{slot}-demo.muelle.test"
 
 
+def test_public_apex_moves_next_and_previews(config: Config) -> None:
+    demo = dataclasses.replace(config.sites["demo"], public_apex="demo.test")
+    config = dataclasses.replace(config, sites=config.sites | {"demo": demo})
+    slot = protocol.slot_for("demo", "preview", "feat/x", SHA)
+    assert validate(deploy(env="preview", branch="feat/x"), "demo", config, NOW) == f"https://{slot}.demo.test"
+    assert validate(deploy(), "demo", config, NOW) == "https://next.demo.test"
+    assert validate(deploy(env="prod"), "demo", config, NOW) == "https://demo.test"
+
+
 def test_missing_protocol_means_1(config: Config) -> None:
     payload = deploy()
     del payload["protocol"]
