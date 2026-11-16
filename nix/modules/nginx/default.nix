@@ -9,13 +9,18 @@
 let
   inherit (lib) mkOption mkIf types;
   cfg = config.services.muelle;
+  headers = import ../headers.nix lib;
 
   # the listing has no scripts and only an inline stylesheet
-  listingHeaders = ''
-    add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" always;
-    add_header Referrer-Policy "no-referrer" always;
-  ''
-  + cfg.securityHeaders;
+  listingOverrides = {
+    Content-Security-Policy = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+    Referrer-Policy = "no-referrer";
+  };
+  listingHeaders =
+    if cfg.securityHeaders != null then
+      headers.render listingOverrides + cfg.securityHeaders
+    else
+      headers.render (cfg.headers // listingOverrides);
 in
 {
   options.services.muelle = {
@@ -24,18 +29,32 @@ in
       default = "20r/m";
       description = "nginx `limit_req` rate for `/hooks/`, per client IP (burst 5).";
     };
-    securityHeaders = mkOption {
-      type = types.lines;
-      default = ''
-        add_header Strict-Transport-Security "max-age=31536000" always;
-        add_header X-Content-Type-Options "nosniff" always;
-      '';
+    headers = mkOption {
+      type = types.attrsOf (types.nullOr types.str);
+      example = {
+        X-Frame-Options = null;
+        Content-Security-Policy = "frame-ancestors https://partner.example";
+      };
       description = ''
-        nginx `add_header` directives sent by every vhost muelle declares. HSTS
-        leaves out `includeSubDomains` and `preload`: the apex may not be yours.
-        Set to `""` to manage the headers yourself, or per site through
-        `sites.<name>.securityHeaders`. nginx drops server-level `add_header`
-        directives in a location that sets its own: repeat them there.
+        Response headers sent by every vhost muelle declares, as
+        `name = value`; `null` drops one. Defaults, each overridable on its
+        own:
+
+        ${lib.concatStrings (lib.mapAttrsToList (n: v: "- `${n}: ${v}`\n") headers.defaults)}
+        HSTS leaves out `includeSubDomains` and `preload`: the apex may not be
+        yours. Per site: `sites.<name>.headers`. The listing and `/status/`
+        always send their own strict `Content-Security-Policy` and
+        `Referrer-Policy`. nginx drops server-level `add_header` directives in
+        a location that sets its own: repeat them there.
+      '';
+    };
+    securityHeaders = mkOption {
+      type = types.nullOr types.lines;
+      default = null;
+      description = ''
+        Deprecated, use `headers`. When set, these nginx `add_header`
+        directives replace `headers` on every vhost, as before 3.2.0; `""`
+        sends none.
       '';
     };
     previewVhost = mkOption {
@@ -67,6 +86,14 @@ in
   };
 
   config = mkIf cfg.enable {
+    # one definition per header, so a host overrides them one by one
+    services.muelle.headers = lib.mapAttrs (_: lib.mkDefault) headers.defaults;
+
+    warnings = lib.optional (cfg.securityHeaders != null) ''
+      services.muelle.securityHeaders is deprecated: set services.muelle.headers
+      (name = value; null drops one) instead.
+    '';
+
     services.nginx.appendHttpConfig = ''
       limit_req_zone $binary_remote_addr zone=muelle_hooks:1m rate=${cfg.hookRateLimit};
     '';

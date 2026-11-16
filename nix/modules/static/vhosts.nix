@@ -13,6 +13,40 @@ let
   cfg = config.services.muelle;
 
   escapeRe = lib.replaceStrings [ "." "-" ] [ "\\." "\\-" ];
+  headers = import ../headers.nix lib;
+
+  # site headers over the global ones, or the deprecated add_header lines
+  siteHeaders =
+    s:
+    if s.securityHeaders != null then
+      s.securityHeaders
+    else if cfg.securityHeaders != null then
+      cfg.securityHeaders
+    else
+      headers.render (cfg.headers // s.headers);
+
+  # immutablePaths: a server-level add_header fed by a map, not a location,
+  # so it neither drops the other headers nor bypasses a gate on `/`
+  cacheVar = name: "$muelle_immutable_${lib.replaceStrings [ "-" "." ] [ "_" "_" ] name}";
+  cacheMaps = lib.concatStrings (
+    lib.mapAttrsToList (name: s: ''
+      map $uri ${cacheVar name} {
+        default "";
+      ${
+        lib.concatMapStrings (p: ''
+          "~^${lib.escapeRegex p}" "public, max-age=31536000, immutable";
+        '') s.immutablePaths
+      }}
+    '') (lib.filterAttrs (_: s: s.immutablePaths != [ ]) cfg.sites)
+  );
+  # nginx sends no header for an empty value: everything else is untouched.
+  # Without `always`: a 404 under those paths is not cached for a year.
+  cacheHeader =
+    name: s:
+    lib.optionalString (s.immutablePaths != [ ]) ''
+      add_header Cache-Control ${cacheVar name};
+    '';
+  responseHeaders = name: s: siteHeaders s + cacheHeader name s;
 
   prodVhosts = lib.mapAttrs' (
     name: s:
@@ -27,7 +61,7 @@ let
         };
         try_files $uri $uri.html $uri/ =404;
       ''
-      + s.securityHeaders
+      + responseHeaders name s
       + s.extraConfig;
     }
   ) (lib.filterAttrs (_: s: s.domain != null) cfg.sites);
@@ -47,7 +81,7 @@ let
             add_header X-Robots-Tag "noindex, nofollow" always;
             try_files $uri $uri.html $uri/ =404;
           ''
-          + s.securityHeaders;
+          + responseHeaders name s;
         }
         cfg.previewVhost
         s.previewVhost
@@ -77,7 +111,7 @@ let
                 add_header X-Robots-Tag "noindex, nofollow" always;
                 try_files $uri $uri.html $uri/ =404;
               ''
-              + s.securityHeaders;
+              + responseHeaders name s;
             }
             s.publicPreviewVhost
           ]
@@ -85,7 +119,7 @@ let
           [
             {
               locations."/".return = "302 https://$muelle_slot-${name}.${cfg.domain}$request_uri";
-              extraConfig = s.securityHeaders;
+              extraConfig = siteHeaders s;
             }
           ]
       );
@@ -94,6 +128,7 @@ let
 in
 {
   config = mkIf cfg.enable {
+    services.nginx.appendHttpConfig = cacheMaps;
     services.nginx.virtualHosts = lib.mkMerge [
       prodVhosts
       previewVhosts

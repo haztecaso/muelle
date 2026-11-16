@@ -3,6 +3,19 @@
 Changes to the host configuration needed when updating the flake input.
 Releases not listed need none.
 
+## v3.1.0 to v3.2.0
+
+- Every vhost now also sends `Referrer-Policy: strict-origin-when-cross-origin`,
+  `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`.
+  A site embedded in another site's iframe stops loading there: drop or relax
+  them with `sites.<name>.headers` (see [Security model](../explanation/security.md#headers)).
+  A site that sends its own `Content-Security-Policy` through `extraConfig`
+  now sends two: move it to `sites.<name>.headers`.
+- `securityHeaders` (global and per site) is deprecated in favour of
+  `headers` and warns. While set, it replaces `headers` as before.
+- `sites.<name>.immutablePaths` is new (see
+  [Caching hashed assets](environments.md#caching-hashed-assets)).
+
 ## v3.0.0 to v3.1.0
 
 - Nothing required. `sites.<name>.publicPreviewVhost` is new: settings

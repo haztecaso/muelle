@@ -76,6 +76,7 @@
           domain = "demo.test";
           extraConfig = "add_header X-Demo yes always;";
           previewApex = "demo.test";
+          immutablePaths = [ "/_astro/" ];
         };
         sites.pub = {
           repo = "owner/pub";
@@ -83,6 +84,10 @@
           domain = "pub.test";
           previewApex = "pub.test";
           publicPreviews = true;
+          headers = {
+            X-Frame-Options = null;
+            Content-Security-Policy = "frame-ancestors https://partner.test";
+          };
           # stand-in for an auth gate: public previews must not go through it
           previewVhost.locations."/".extraConfig = ''
             if ($http_x_gate != "open") {
@@ -113,7 +118,8 @@
     counter = [0]
 
     def make_artifact(name, content, kind="zip", site="demo"):
-        machine.succeed(f"rm -rf /tmp/build && mkdir -p /tmp/build/dist && echo '{content}' > /tmp/build/dist/index.html")
+        machine.succeed(f"rm -rf /tmp/build && mkdir -p /tmp/build/dist/_astro && echo '{content}' > /tmp/build/dist/index.html")
+        machine.succeed("echo 'body{}' > /tmp/build/dist/_astro/a.css")
         machine.succeed("mkdir -p /srv/artifacts/repos/owner/demo /srv/artifacts/repos/owner/prodonly /srv/artifacts/repos/owner/pub")
         path = f"/srv/artifacts/repos/owner/{site}/{name}"
         if kind == "zip":
@@ -210,7 +216,23 @@
             h = headers(url, "-H 'X-Gate: open'")
             assert "content-security-policy: default-src 'none'" in h, (url, h)
             assert "cache-control: no-store" in h, (url, h)
-        assert "content-security-policy" not in headers("https://demo.test/")
+        h = headers("https://demo.test/")
+        assert "referrer-policy: strict-origin-when-cross-origin" in h, h
+        assert "x-frame-options: deny" in h, h
+        assert "content-security-policy: frame-ancestors 'none'" in h, h
+        # the listing sends its own strict CSP and referrer policy, once
+        h = headers("https://muelle.test/", "-H 'X-Gate: open'")
+        assert h.count("content-security-policy:") == 1 and h.count("referrer-policy:") == 1, h
+        assert "referrer-policy: no-referrer" in h, h
+
+    with subtest("immutable paths"):
+        for url in ["https://demo.test", "https://next-demo.muelle.test"]:
+            h = headers(f"{url}/_astro/a.css")
+            assert "cache-control: public, max-age=31536000, immutable" in h, (url, h)
+            assert "strict-transport-security" in h and "x-frame-options" in h, (url, h)
+            assert "cache-control" not in headers(f"{url}/"), url
+            # a missing file is not cached
+            assert "cache-control" not in headers(f"{url}/_astro/missing.css"), url
 
     with subtest("preview deploy and teardown"):
         id, resp = deploy("demo", "preview", SHA2, "d.zip", branch="feat/x")
@@ -232,6 +254,9 @@
         machine.succeed(f"curl -skf {RESOLVE} https://next.pub.test/ | grep next-1111111")
         h = machine.succeed(f"curl -skI {RESOLVE} https://next.pub.test/").lower()
         assert "x-robots-tag: noindex, nofollow" in h and "strict-transport-security" in h, h
+        # per-site headers: framing allowed for one origin
+        assert "x-frame-options" not in h, h
+        assert "content-security-policy: frame-ancestors https://partner.test" in h, h
         # the muelle domain vhost keeps its gate
         code = machine.succeed(f"curl -sk {RESOLVE} -o /dev/null -w '%{{http_code}}' https://next-pub.muelle.test/")
         assert code == "401", code

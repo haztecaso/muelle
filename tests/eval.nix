@@ -416,6 +416,158 @@ let
         false
       ];
     };
+    # five headers by default on every vhost, the listing's CSP replaced
+    testDefaultHeaders = {
+      expr = map (
+        v:
+        map (h: lib.hasInfix "add_header ${h} " v.extraConfig) [
+          "Strict-Transport-Security"
+          "X-Content-Type-Options"
+          "Referrer-Policy"
+          "X-Frame-Options"
+          "Content-Security-Policy"
+        ]
+      ) (muelleVhosts default);
+      expected = lib.replicate 5 (lib.replicate 5 true);
+    };
+    testListingHeaders = {
+      expr =
+        let
+          c = (vhosts default)."muelle.test".extraConfig;
+        in
+        {
+          csp = lib.length (lib.splitString "Content-Security-Policy" c) - 1;
+          strict = lib.hasInfix "default-src 'none'" c;
+          referrer = lib.hasInfix ''Referrer-Policy "no-referrer"'' c;
+        };
+      expected = {
+        csp = 1;
+        strict = true;
+        referrer = true;
+      };
+    };
+    # global and per-site overrides, header by header
+    testHeadersOverride =
+      let
+        v = vhosts (eval {
+          services.muelle.headers.Referrer-Policy = "no-referrer";
+          services.muelle.sites = {
+            demo = {
+              repo = "owner/demo";
+              secretFile = "/run/secrets/demo";
+              domain = "demo.test";
+              headers = {
+                X-Frame-Options = null;
+                Content-Security-Policy = ''frame-ancestors "https://a.test"'';
+                X-Extra = "1";
+              };
+            };
+            other = {
+              repo = "owner/other";
+              secretFile = "/run/secrets/other";
+              domain = "other.test";
+            };
+          };
+        });
+        has = name: h: lib.hasInfix "add_header ${h} " v.${name}.extraConfig;
+      in
+      {
+        expr = {
+          demo = map (has "demo.test") [
+            "X-Frame-Options"
+            "X-Extra"
+            "Strict-Transport-Security"
+          ];
+          demoReferrer = lib.hasInfix ''Referrer-Policy "no-referrer"'' v."demo.test".extraConfig;
+          escaped = lib.hasInfix ''"frame-ancestors \"https://a.test\""'' v."demo.test".extraConfig;
+          other = map (has "other.test") [
+            "X-Frame-Options"
+            "X-Extra"
+          ];
+        };
+        expected = {
+          demo = [
+            false
+            true
+            true
+          ];
+          demoReferrer = true;
+          escaped = true;
+          other = [
+            true
+            false
+          ];
+        };
+      };
+    testSecurityHeadersDeprecated = {
+      expr =
+        lib.any (lib.hasInfix "securityHeaders is deprecated")
+          (eval {
+            services.muelle.securityHeaders = "";
+          }).warnings;
+      expected = true;
+    };
+
+    testImmutablePaths =
+      let
+        c = eval {
+          services.muelle.sites = {
+            demo = {
+              repo = "owner/demo";
+              secretFile = "/run/secrets/demo";
+              domain = "demo.test";
+              previewApex = "demo.test";
+              immutablePaths = [
+                "/_astro/"
+                "/a.b/"
+              ];
+            };
+            pub = {
+              repo = "owner/pub";
+              secretFile = "/run/secrets/pub";
+              domain = "pub.test";
+              previewApex = "pub.test";
+              publicPreviews = true;
+              immutablePaths = [ "/assets/" ];
+            };
+            plain = {
+              repo = "owner/plain";
+              secretFile = "/run/secrets/plain";
+              domain = "plain.test";
+            };
+          };
+        };
+        v = vhosts c;
+        cached = name: lib.hasInfix "add_header Cache-Control $muelle_immutable_" v.${name}.extraConfig;
+      in
+      {
+        expr = {
+          vhosts = map cached [
+            "demo.test"
+            "muelle-preview-demo"
+            "muelle-apex-demo"
+            "pub.test"
+            "muelle-apex-pub"
+            "plain.test"
+          ];
+          map = lib.hasInfix ''"~^/a\.b/" "public, max-age=31536000, immutable";'' c.services.nginx.appendHttpConfig;
+          maps =
+            lib.length (lib.splitString "map $uri $muelle_immutable_" c.services.nginx.appendHttpConfig) - 1;
+        };
+        expected = {
+          # demo's apex only redirects
+          vhosts = [
+            true
+            true
+            false
+            true
+            true
+            false
+          ];
+          map = true;
+          maps = 2;
+        };
+      };
   };
 in
 {
