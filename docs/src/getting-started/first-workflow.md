@@ -12,6 +12,13 @@ on:
     branches: ["**"]
   delete:
 
+# one group per branch: deleting a branch cancels its running deploy, which
+# would otherwise recreate the preview after the teardown. On delete,
+# github.event.ref is the bare branch name, without refs/heads/.
+concurrency:
+  group: deploy-${{ github.event_name == 'delete' && format('refs/heads/{0}', github.event.ref) || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   deploy:
     if: github.event_name == 'push'
@@ -54,6 +61,13 @@ jobs:
 
 Replace `<sha>` with the commit of a release, see
 [Versioning and pinning the action](../guides/versioning.md).
+
+Keep the `concurrency` group: without it, a deploy still running when its
+branch is deleted (say, right after merging a pull request) finishes after
+the teardown and brings the preview back. The group must match between the
+`push` and `delete` events, and their refs differ (`refs/heads/feat` and
+`feat`), hence the `format`. A newer push also cancels an older deploy of the
+same branch; the listing shows it as aborted.
 
 The deploy step waits until the host has deployed (or failed) and sets the
 step output `url` and the GitHub Deployment state. The job's token stays valid
